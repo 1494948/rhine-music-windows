@@ -1,7 +1,7 @@
 {
   "name": "rhine-music-windows",
   "productName": "Rhine Music",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "license": "MIT",
   "private": true,
   "author": {
@@ -28,17 +28,17 @@
     "format": "prettier --write src scripts electron index.html package.json"
   },
   "dependencies": {
-    "@kitlangton/rolling-number": "0.4.1",
     "music-metadata": "^11.15.0",
-    "opencc-js": "^1.4.2",
-    "three": "^0.183.0"
+    "opencc-js": "^1.4.2"
   },
   "devDependencies": {
+    "@kitlangton/rolling-number": "0.4.1",
     "@types/three": "^0.183.0",
     "cross-env": "^7.0.3",
     "electron": "^33.2.1",
     "electron-builder": "^25.1.8",
     "prettier": "^3.9.6",
+    "three": "^0.183.0",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   },
@@ -66,14 +66,25 @@
     ],
     "asarUnpack": [
       "scripts/**/*.mjs",
-      "assets/**/*"
+      "assets/**/*",
+      "node_modules/**/*"
     ],
     "asar": true,
     "npmRebuild": false,
     "win": {
       "target": [
-        { "target": "nsis", "arch": ["x64"] },
-        { "target": "portable", "arch": ["x64"] }
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
       ],
       "icon": "assets/icon.ico",
       "artifactName": "Rhine Music-${version}-${arch}.${ext}"
@@ -84,7 +95,9 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "installerLanguages": ["zh_CN"],
+      "installerLanguages": [
+        "zh_CN"
+      ],
       "language": "2052",
       "deleteAppDataOnUninstall": false,
       "shortcutName": "Rhine Music"

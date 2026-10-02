@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
-<title>Rhine Music</title>
+<title>Rhine Music · 服务未启动</title>
 <style>
   :root {
     color-scheme: dark;
@@ -10,34 +10,73 @@
     --ink: #e8e8ed;
     --muted: #9a9aa5;
     --accent: #fa2b56;
+    --warn: #f5a524;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0; min-height: 100vh; display: grid; place-items: center;
     background: var(--bg); color: var(--ink);
-    font: 15px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    font: 15px/1.65 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
   }
-  .card { max-width: 560px; padding: 40px; text-align: center; }
-  h1 { font-size: 22px; font-weight: 600; margin: 0 0 12px; }
-  p { color: var(--muted); margin: 0 0 8px; }
+  .card { max-width: 640px; padding: 40px; }
+  h1 { font-size: 21px; font-weight: 600; margin: 0 0 14px; }
+  p { color: var(--muted); margin: 0 0 10px; }
+  h2 { font-size: 14px; font-weight: 600; margin: 22px 0 8px; color: var(--ink); }
+  .box {
+    padding: 12px 14px; border-radius: 10px; margin: 0 0 12px;
+    background: #17171d; border-left: 3px solid var(--accent);
+    font-size: 13px; line-height: 1.6;
+  }
+  .box.err { color: #ffb4b4; white-space: pre-wrap; word-break: break-word; }
   code {
-    display: inline-block; margin-top: 12px; padding: 8px 14px;
-    background: #1a1a20; border-radius: 8px; font-size: 12.5px;
-    color: var(--ink); word-break: break-all; user-select: all;
+    display: block; padding: 8px 10px; border-radius: 8px;
+    background: #1e1e25; font-size: 12px; color: var(--ink);
+    word-break: break-all; user-select: all;
   }
-  .accent { color: var(--accent); }
+  ol { color: var(--muted); margin: 8px 0 0; padding-left: 22px; font-size: 13.5px; }
+  li { margin-bottom: 5px; }
+  a { color: var(--accent); }
+  .muted-note { font-size: 12.5px; margin-top: 22px; }
 </style>
 </head>
 <body>
   <div class="card">
     <h1>音乐库服务未能启动</h1>
-    <p>应用窗口已打开，但本地的音乐库服务没有就绪，无法加载界面。</p>
-    <p>常见原因：端口被占用、构建产物缺失、或数据目录没有写入权限。</p>
-    <p>服务日志位于：</p>
-    <code id="log">%APPDATA%\rhine-music-windows\logs\player-service.log</code>
-    <p style="margin-top:24px">
-      <span class="accent">提示：</span>修改端口或 GPU 设置后需要重启应用才会生效。
+    <p>应用窗口已打开，但本机的音乐库服务没有就绪，无法加载界面。下面是排查这个问题需要的信息。</p>
+
+    <h2>错误详情</h2>
+    <div class="box err" id="err">（主进程未提供错误信息）</div>
+
+    <h2>服务日志</h2>
+    <code id="log">正在读取…</code>
+
+    <h2>可以试试</h2>
+    <ol>
+      <li>如果提示<b>端口被占用</b>：在设置里改端口（默认 5178），或关掉占用该端口的程序后重启。</li>
+      <li>如果提示<b>没有权限</b>：右键 → 以管理员身份运行。</li>
+      <li>如果是<b>首次启动</b>：首次扫描曲库可能较慢，等十几秒再试。</li>
+      <li>仍不行：把上面的日志内容反馈到
+        <a href="https://github.com/1494948/rhine-music-windows/issues">仓库 Issues</a>。</li>
+    </ol>
+
+    <p class="muted-note">
+      提示：GPU 与端口设置在进程启动时生效，改完需要重启应用才会生效。
     </p>
   </div>
+
+  <script>
+    // 从 preload 注入的启动信息里取真实路径。
+    // 不能用硬编码字符串：userData 目录名由 productName 决定（本项目是
+    // 「Rhine Music」而不是包名 rhine-music-windows），写死会把用户引到错误目录。
+    (function () {
+      var startup = (window.rhine && window.rhine.startup) || null
+      var paths = (startup && startup.paths) || {}
+
+      document.getElementById('log').textContent = paths.log || '（未获取到日志路径）'
+
+      var detail = String(window.__RHINE_SERVICE_ERROR__ || '').trim()
+      if (detail) document.getElementById('err').textContent = detail
+    })()
+  </script>
 </body>
 </html>

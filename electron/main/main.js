@@ -14,6 +14,9 @@ const { app, BrowserWindow, ipcMain, dialog, shell, nativeTheme, webUtils } = re
 const path = require('node:path')
 const fs = require('node:fs')
 const fsp = require('node:fs/promises')
+// 自检里要做端口连通性断言。注意必须用 Node 的 net ——
+// Electron 的 net 模块没有 connect 方法。
+const net = require('node:net')
 
 const { JsonStore } = require('./store.js')
 const { LibraryService } = require('./library-service.js')
@@ -254,14 +257,29 @@ async function loadWithRetry(win, url, attempts = 10) {
  * 加载降级页。
  * 注意：项目路径可能含空格（`C:\AI Document\...`），
  * 必须走 pathToFileURL 而不是字符串拼接，否则 loadFile 会 ERR_ABORTED。
+ *
+ * @param {BrowserWindow} win
+ * @param {Error} [error] 失败原因，会注入页面供用户直接看到
  */
-async function loadFallback(win) {
+async function loadFallback(win, error) {
   const { pathToFileURL } = require('node:url')
   const file = path.join(PROJECT_DIR, 'electron', 'renderer', 'fallback.html')
   try {
     await win.loadURL(pathToFileURL(file).href)
-  } catch (error) {
-    console.error('[window] 降级页也加载失败:', error.message)
+  } catch (loadError) {
+    console.error('[window] 降级页也加载失败:', loadError.message)
+    return
+  }
+  // 把真实错误注入页面。只在日志里打印是不够的 ——
+  // 用户看到的是「服务未能启动」，却不知道具体原因，只能干等。
+  if (error) {
+    const detail = `${error.code ? `[${error.code}] ` : ''}${error.message}`
+    try {
+      await win.webContents.executeJavaScript(
+        `window.__RHINE_SERVICE_ERROR__ = ${JSON.stringify(detail)}; true`,
+        true,
+      )
+    } catch { /* 注入失败不影响降级页本身显示 */ }
   }
 }
 
@@ -362,7 +380,7 @@ app.whenReady().then(async () => {
   } catch (error) {
     console.error('[service]', error.message)
     if (!mainWindow.isDestroyed()) {
-      await loadFallback(mainWindow)
+      await loadFallback(mainWindow, error)
       mainWindow.show()
     }
     if (error.code === 'PORT_OCCUPIED') {
@@ -574,40 +592,128 @@ app.on('window-all-closed', () => {
 })
 
 // ─────────────────────────── 自检 / 截图 ───────────────────────────
+
+/**
+ * 渲染层探针：只检查「窗口内能观察到的事实」。
+ * 服务是否就绪由主进程侧断言（那里才有端口与日志的访问权）。
+ */
+const RENDER_PROBE = `
+  (async () => {
+    const out = { pass: [], fail: [], info: {} }
+    try {
+      const api = window.rhine
+      out.info.hasApi = typeof api === 'object' && api !== null
+      const st = api?.startup ?? null
+      out.info.startup = !!st
+      out.info.platform = st?.platform ?? null
+      out.info.gpuVendor = st?.gpu?.vendor ?? null
+      out.info.gpuRenderer = st?.gpu?.rendererName ?? null
+      out.info.motion = st?.settings?.motion ?? null
+      out.info.errors = window.__RHINE_ERRORS__ || []
+
+      if (!out.info.hasApi) out.fail.push('window.rhine 未注入（preload 未执行）')
+      else out.pass.push('preload API 注入成功')
+      if (!st) out.fail.push('startup 同步载荷缺失')
+      else out.pass.push('启动信息就绪 platform=' + st.platform)
+      return JSON.stringify(out)
+    } catch (e) {
+      out.fail.push('probe: ' + e.message)
+      return JSON.stringify(out)
+    }
+  })()
+`
+
+/**
+ * 主进程侧断言。
+ *
+ * 这一段是 v0.4.0 缺陷的教训：当时的自检只验证 preload 注入，
+ * 结果「音乐库服务因找不到 music-metadata 而启动失败」这种
+ * **一眼可见、用户100% 会撞上**的问题被漏过去了。
+ * 现在必须同时断言：服务进程活着、端口能连、健康检查返回、日志无模块解析错误、
+ * 以及窗口真的停在服务地址而不是降级页。
+ */
+async function assertServiceHealthy(out) {
+  const { port, baseUrl } = service
+
+  out.info.servicePort = port
+  out.info.servicePortReady = service.portReady
+  out.info.childAlive = Boolean(service.child) && service.child.exitCode === null
+
+  if (service.portReady && out.info.childAlive) {
+    out.pass.push('服务进程存活')
+  } else {
+    out.fail.push(`服务进程未存活（portReady=${service.portReady}, exitCode=${service.child?.exitCode}）`)
+  }
+
+  // 端口连通性
+  const reachable = await new Promise((resolve) => {
+    const socket = net.connect({ host: '127.0.0.1', port })
+    const done = (ok) => { socket.removeAllListeners(); socket.destroy(); resolve(ok) }
+    socket.setTimeout(1500)
+    socket.once('connect', () => done(true))
+    socket.once('error', () => done(false))
+    socket.once('timeout', () => done(false))
+  })
+  out.info.portReachable = reachable
+  if (reachable) out.pass.push(`端口 ${port} 可连接`)
+  else out.fail.push(`端口 ${port} 无法连接`)
+
+  // 健康检查：真正证明 HTTP 服务能用，而不只是端口开着
+  let health = null
+  try {
+    const response = await fetch(`${baseUrl}/api/health`, { signal: AbortSignal.timeout(4000) })
+    health = { status: response.status, body: await response.json().catch(() => null) }
+  } catch (error) {
+    health = { error: error.message }
+  }
+  out.info.health = health
+  if (health?.status === 200) out.pass.push('/api/health 返回 200')
+  else out.fail.push(`/api/health 异常：${health?.error ?? ('status=' + health?.status)}`)
+
+  // 日志里出现模块解析错误 → 服务进程起来但功能不可用（v0.4.0 的真实故障）
+  const tail = await service.readLogTail(40)
+  const fatal = /ERR_MODULE_NOT_FOUND|Cannot find package|Cannot find module|ENOENT/.exec(tail)
+  out.info.logHasFatalError = Boolean(fatal)
+  if (fatal) {
+    out.fail.push(`服务日志含致命错误：${fatal[0]}（见 ${service.logPath}）`)
+  } else if (reachable) {
+    out.pass.push('服务日志无模块解析错误')
+  }
+
+  // 窗口是否真的停在服务地址（而不是降级页）
+  const currentUrl = mainWindow.webContents.getURL()
+  out.info.windowUrl = currentUrl
+  if (currentUrl.startsWith(baseUrl)) {
+    out.pass.push('窗口已加载服务地址')
+  } else {
+    out.fail.push(`窗口未加载服务地址（当前 ${currentUrl.slice(0, 80)}）`)
+  }
+}
+
 async function runSelfTest() {
   await new Promise((r) => setTimeout(r, 2500))
-  const probe = `
-    (async () => {
-      const out = { pass: [], fail: [], info: {} }
-      try {
-        const api = window.rhine
-        out.info.hasApi = typeof api === 'object' && api !== null
-        const st = api?.startup ?? null
-        out.info.startup = !!st
-        out.info.platform = st?.platform ?? null
-        out.info.gpuVendor = st?.gpu?.vendor ?? null
-        out.info.gpuRenderer = st?.gpu?.rendererName ?? null
-        out.info.motion = st?.settings?.motion ?? null
-        out.info.libraryRoots = st?.settings?.library?.roots?.length ?? null
-        out.info.errors = window.__RHINE_ERRORS__ || []
+  /** @type {{pass:string[],fail:string[],info:object}} */
+  const out = { pass: [], fail: [], info: {} }
 
-        if (!out.info.hasApi) out.fail.push('window.rhine 未注入（preload 未执行）')
-        else out.pass.push('preload API 注入成功')
-        if (!st) out.fail.push('startup 同步载荷缺失')
-        else out.pass.push('启动信息就绪 platform=' + st.platform)
-        return JSON.stringify(out)
-      } catch (e) {
-        out.fail.push('probe: ' + e.message)
-        return JSON.stringify(out)
-      }
-    })()
-  `
+  // 先做主进程侧断言 —— 不依赖渲染层，即使页面没加载也能报出真实原因
   try {
-    const raw = await mainWindow.webContents.executeJavaScript(probe, true)
-    console.log('SELFTEST_RESULT ' + raw)
+    await assertServiceHealthy(out)
   } catch (error) {
-    console.log('SELFTEST_RESULT ' + JSON.stringify({ fail: [error.message] }))
+    out.fail.push('服务断言异常：' + error.message)
   }
+
+  // 再跑渲染层探针
+  try {
+    const raw = await mainWindow.webContents.executeJavaScript(RENDER_PROBE, true)
+    const parsed = JSON.parse(raw)
+    out.pass.push(...parsed.pass)
+    out.fail.push(...parsed.fail)
+    out.info = { ...out.info, ...parsed.info }
+  } catch (error) {
+    out.fail.push('渲染层探针执行失败：' + error.message)
+  }
+
+  console.log('SELFTEST_RESULT ' + JSON.stringify(out))
   isQuitting = true
   app.quit()
 }

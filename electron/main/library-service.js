@@ -164,8 +164,14 @@ class LibraryService {
       const script = unpackAware(path.join(this.projectDir, 'scripts', 'music-server.mjs'))
       const execPath = this.#nodeExecPath()
       const cwd = this.#realCwd(script)
-      const usingElectronRuntime = path.basename(execPath).toLowerCase() === 'electron.exe'
-      // 诊断日志：ENOENT 时唯一能定位问题的信息
+      // 判定「用的是 Electron 自带运行时」，判据是**与自身可执行文件相同**。
+      //
+      // 不能用 `basename === 'electron.exe'`：打包后 exe 叫 `Rhine Music.exe`，
+      // 那个判断永远为false，于是 ELECTRON_RUN_AS_NODE 被置空，
+      // 行为取决于 Electron 对「空值环境变量」的处理——非常脆弱。
+      const usingElectronRuntime =
+        path.resolve(execPath).toLowerCase() === path.resolve(process.execPath).toLowerCase()
+      // 诊断日志：spawn 失败时唯一能定位问题的信息
       console.log('[service] spawn 诊断', JSON.stringify({
         execPath,
         script,
@@ -186,9 +192,9 @@ class LibraryService {
           MUSIC_DATA_DIR: this.dataDir,
           // 打包版会带上外层 shell 的 NODE_OPTIONS，Electron 会拒绝并报警
           NODE_OPTIONS: '',
-          // 只有用 Electron 自带运行时才需要这个变量；
-          // 用真实 node.exe 时设置它反而会让 node 拒绝启动。
-          ...(usingElectronRuntime ? { ELECTRON_RUN_AS_NODE: '1' } : { ELECTRON_RUN_AS_NODE: '' }),
+          // 用 Electron 自带运行时时必须设这个变量，否则它会当图形应用启动；
+          // 用真实 node.exe 时必须清掉，否则 node 会拒绝启动。
+          ELECTRON_RUN_AS_NODE: usingElectronRuntime ? '1' : '',
         },
         stdio: ['ignore', log.fd, log.fd],
         windowsHide: true,

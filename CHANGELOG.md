@@ -2,6 +2,44 @@
 
 本记录区分正式版本、本地开发副本与上游档案终端。早期目录 `RhineLabUI`、`RhineLabUI-Music-v2`、`RhineLabUI-Music-v3` 现统一对应 V0.0.1、V0.0.2、V0.0.3；这些编号不表示补发历史版本，V0.2.0、V0.3.0 是后续独立版本。当前功能与安装方式见 [README](README.md)，当前视觉和交互规则见 [DESIGN](DESIGN.md)。
 
+## V0.4.1 · 2026-10-02（Windows 桌面版 · 修正版）
+
+修复 V0.4.0 的**阻断性缺陷**：音乐库服务在打包后无法启动，
+所有用户首次打开都会看到「音乐库服务未能启动」的降级页，界面完全不可用。
+
+### 本次修复
+
+- **根因**：打包时 `node_modules` 被压进 `app.asar`，而音乐库服务是以独立
+  Node 进程运行的**真实文件系统**路径，ESM 解析沿脚本目录逐级向上找
+  `node_modules`，在 `app.asar.unpacked/` 里找不到 `music-metadata`，
+  服务进程一起来就崩。修法是把 `node_modules` 一并加入 `asarUnpack`。
+- **顺带瘦身**：`three`（38 MB）与 `@kitlangton/rolling-number` 已由 Vite
+  打进 `dist/assets/`，运行时不需要副本，移入 devDependencies。
+  安装包因此缩小约 3 MB。
+- **修正 Electron 运行时判定**：原判据是 `basename === 'electron.exe'`，
+  而打包后 exe 名是 `Rhine Music.exe`，永远不匹配，导致
+  `ELECTRON_RUN_AS_NODE` 被错误置空。改判「是否与自身可执行文件相同」。
+- **降级页显示真实错误与真实日志路径**：原先路径是硬编码的
+  `%APPDATA%\rhine-music-windows\...`，而实际目录由 `productName` 决定
+  （是 `Rhine Music`），用户按提示去找会找不到文件。
+- **自检加强**：原先只验证 preload 注入（2 项），现同时断言服务进程存活、
+  端口可连、`/api/health` 返回 200、日志无模块解析错误、窗口确实停在服务
+  地址（7 项）。**V0.4.0 的缺陷正是从这个缺口漏过去的。**
+
+### 验证
+
+| 场景 | 结果 |
+|---|---|
+| 开发态 | 7/7 通过 |
+| 打包版（本机有 Node） | 7/7 通过 |
+| 打包版（模拟无 Node 的干净机器） | 7/7 通过，走 Electron 内置运行时 |
+
+### 升级方式
+
+安装新版前请先从系统托盘**完全退出**旧版（右键托盘图标 → 退出），
+否则新文件写不进去。曲库数据在 `%APPDATA%\Rhine Music\`，
+升级不会丢失，无需重做。
+
 ## V0.3.0 · 2026-10-01
 
 基于 V0.2.0 整理的 macOS 源码发行版；主要功能修改与界面回归记录形成于 2026-09-30。发布包为 `Rhine-Music-Demo-v0.3.0-macOS.zip`，解压后的顶层目录为 `V0.3.0/`。
