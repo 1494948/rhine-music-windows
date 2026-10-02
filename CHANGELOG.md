@@ -2,6 +2,23 @@
 
 本记录区分正式版本、本地开发副本与上游档案终端。早期目录 `RhineLabUI`、`RhineLabUI-Music-v2`、`RhineLabUI-Music-v3` 现统一对应 V0.0.1、V0.0.2、V0.0.3；这些编号不表示补发历史版本，V0.2.0、V0.3.0 是后续独立版本。当前功能与安装方式见 [README](README.md)，当前视觉和交互规则见 [DESIGN](DESIGN.md)。
 
+## V0.4.2 · 2026-10-03（Windows 桌面版 · 第一个可用版本）
+
+修复 V0.4.1 的**第二个阻断性缺陷**：Vite 构建产物（index.html + 全部 JS/CSS）
+没有进入安装包——`build.files` 漏配 `dist/**/*`。双击 exe 后服务正常启动，
+但窗口请求 `/` 得到 404 错误 JSON，用户看到空白窗口。
+
+- `build.files` 加入 `dist/**/*`
+- `dist/public/content` 加入 `asarUnpack`：独立 Node 服务进程从脚本位置推导
+  `app.asar.unpacked` 为根，读不到 asar 虚拟路径，三者必须实体存在
+- 构建链改为 `vite build && electron-builder`，前端构建失败即中止，不再拿旧产物打包
+- **自检从 7 项扩展到 10 项**，新增页面内容断言：首页是 HTML 而非错误 JSON、
+  打包 JS 不含 `music-roots`（textarea 已移除）、含 `import-mount`（桌面导入区块
+  已构建）、入口 JS 资源完整。断言对象是打包后的运行时 JS 而非 index.html
+  静态模板——先测静态页会同时得到假阳性与假阴性（实测踩过）
+- 验证：开发态 / 打包版有 Node / 打包版无 Node 三场景 10/10；
+  打包版首页截图确认完整界面渲染
+
 ## V0.4.1 · 2026-10-02（Windows 桌面版 · 修正版）
 
 修复 V0.4.0 的**阻断性缺陷**：音乐库服务在打包后无法启动，

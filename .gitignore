@@ -12,3 +12,6 @@ music-data*/
 .env
 .env.local
 *.tsbuildinfo
+
+# 截图/预览产物
+preview/
