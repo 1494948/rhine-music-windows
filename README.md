@@ -1,6 +1,18 @@
 # Rhine Music Demo · V0.3.0
 
-> ## 🪟 这是 Windows 桌面发行版
+> ## ⚠️ 这是第三方衍生版本（非官方）
+>
+> 本仓库是 [RonaldDeng/Rhine-Music-Demo](https://github.com/RonaldDeng/Rhine-Music-Demo)
+> 的**独立衍生作品**，由第三方改造为 Windows 桌面版。
+>
+> - **与上游作者无隶属、赞助或背书关系**。上游作者未参与、未认可、也不为本版本提供支持。
+> - 上游及本仓库均为 [MIT](LICENSE) 许可（代码部分）。署名见 [NOTICE.md](NOTICE.md)。
+> - 上游另有原版 [LBEILC/RhineLabUI](https://github.com/LBEILC/RhineLabUI)（MIT）。
+> - 非代码资产（3D 模型、音频、图标、截图等）**不适用 MIT**，详见 NOTICE.md。
+> - 上游问题请提给[上游仓库](https://github.com/RonaldDeng/Rhine-Music-Demo/issues)；
+>   本版本引入的问题请提给本仓库。
+>
+> ## 🪟 Windows 桌面发行版
 >
 > 本仓库基于上游改造，**新增了可安装的 Windows 桌面应用**（Electron 壳层），
 > 包含：系统文件夹选择器与拖拽导入、NVIDIA GPU 检测与回退、
