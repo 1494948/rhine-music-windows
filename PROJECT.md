@@ -133,6 +133,18 @@ npm run build:portable # 仅产出便携版
 19. **`npm install` 会在 esbuild postinstall 失败**（沙箱阻断 spawn），
     需补装 `@esbuild/win32-x64`
 20. **同一文件禁止并行 Edit**（会静默丢改动）
+21. **★ 系统代理会吞渲染进程对 127.0.0.1 的请求**（2026-10-03 实测）：
+    fetch 挂起不返回、界面永远 0 专辑——而主进程 Node fetch 不走系统代理，
+    同一端点却有数据，极具迷惑性。修复：`session.defaultSession.setProxy({mode:'direct'})`
+    **必须在创建窗口之前 await 完成**（whenReady 里先设代理再 createWindow）。
+    `commandLine.appendSwitch('proxy-bypass-list')` 实测不生效
+22. **渲染进程与主进程看到的「同一服务」可能不同**：spawn 出来的服务子进程
+    在主进程被强杀后仍存活并占端口，下一个实例 probePort 复用它——
+    测试时先 `taskkill node.exe` 再跑，避免旧实例数据干扰判断
+23. **`??` 与 `/` 的优先级**：`a ?? 0/1024` 实际是 `a ?? 0`（`/` 优先级更高），
+    字节数被直接当 MB 显示。写单位换算必须加括号
+24. **开场动画（MusicBoot）期间 loadLibrary 会推迟**：截图/自动化环境无交互、
+    动画不结束 → 数据永不加载。shot 模式需自动点 `.music-boot-skip`
 
 ## 7. 变更记录
 
