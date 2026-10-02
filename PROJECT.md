@@ -85,22 +85,81 @@ npm run build:portable # 仅产出便携版
 
 ## 6. 已知的坑（本机实测）
 
-1. **`ELECTRON_RUN_AS_NODE` 必须清除**，否则 `electron.exe` 以纯 Node 模式启动
-2. **沙箱下必须加 `--no-sandbox --disable-gpu`**，否则渲染进程被杀
-3. **`git clone` 会报 `CRYPT_E_NO_REVOCATION_CHECK`** → 用
-   `git -c http.schannelCheckRevoke=false clone`
-4. **electron-builder 每次必须换新输出目录**（`--config.directories.output=dist-installer-vN`），
-   安全删除钩子会拦下目录清理
-5. **`app.asar` 长期被进程占用**（错误码 32），清理要等进程退出
-6. **`fs.cpSync` 在中文长路径下报 `EIO`**，便携版打包要自实现递归复制
-7. **winCodeSign 下载会因本机 TLS 中间人代理失败** → 预取到
-   `%LOCALAPPDATA%\electron-builder\Cache`
-8. **同一文件禁止并行 Edit**（会静默丢改动）
+### 打包 / 运行时（**踩过最深的几个**）
+
+1. **★ 子进程用 ESM 依赖时，`node_modules` 必须加进 `asarUnpack`**
+   （2026-10-02，v0.4.0 阻断性缺陷）
+   音乐库服务是以独立 Node 进程运行的**真实文件系统**路径，ESM 从脚本目录
+   逐级向上找 `node_modules`。依赖若只存在于 asar 内，服务一起来就
+   `ERR_MODULE_NOT_FOUND`，界面直接卡在降级页。
+   **判据：凡是被 spawn/fork 执行的脚本，它 import 的包都要在 `asarUnpack` 覆盖范围内。**
+2. **判断「是否 Electron 自带运行时」不能靠 exe 文件名**
+   `basename === 'electron.exe'` 对打包版（exe 名 = `productName`）永远为 false。
+   正确判据：与 `process.execPath` 比对。
+3. **`spawn` 的 `cwd` 指向 asar 会报 `ENOENT`**，且错误信息只显示可执行文件路径
+   —— 极易误判成「node 找不到」。`existsSync('.../app.asar')` 返回 true，
+   但它**是文件不是目录**，必须用 `statSync().isDirectory()` 判断。
+   首选 cwd 用「脚本自身所在目录」，它经过解包验证必然存在。
+4. **`loadFile` 在含空格路径下 ERR_ABORTED**，必须 `pathToFileURL().href`
+5. **服务刚 spawn 时端口未就绪**，`loadURL` 要加重试
+6. **Vite 已打包的库不必进 `dependencies`**：`three` 等已进 `dist/assets/`，
+   运行时不需要 `node_modules` 副本。移入 devDependencies 省 38 MB
+7. **自检必须断言「服务真的可用」**，不能只断言「preload 注入成功」
+   —— v0.4.0 的缺陷正是从这个缺口漏过去的（当时自检仅 2 项、只查 preload）。
+   现扩到 7 项：服务进程存活 / 端口可连 / `/api/health` 200 /
+   日志无模块解析错误 / 窗口确实停在服务地址
+8. **验证打包版要模拟干净机器**：`PATH="/c/Windows/System32:/c/Windows"`
+   —— 本机装了 Node 会掩盖「用户没装 Node」这类问题
+
+### 环境层
+
+9. **`ELECTRON_RUN_AS_NODE` 必须清除**，否则 `electron.exe` 以纯 Node 模式启动
+10. **Electron 子进程要跑 Node 脚本时**必须设 `ELECTRON_RUN_AS_NODE: '1'`；
+    用真实 node.exe 时又必须清掉，否则 node 拒绝启动
+11. **Electron 的 `net` 模块没有 `connect`**（那是 Node 的 `net`）
+12. **沙箱下必须加 `--no-sandbox --disable-gpu`**，否则渲染进程被杀
+13. **`git clone` 报 `CRYPT_E_NO_REVOCATION_CHECK`** → 用
+    `git -c http.schannelCheckRevoke=false clone`；push 则用
+    `GIT_SSL_NO_VERIFY=true`
+14. **全局 `credential.helper` 是空值**，会清掉 system 级的 manager ——
+    所有凭据操作必须带 `-c credential.helper=manager`，否则静默返回空
+15. **提交邮箱要用 `<id>+<login>@users.noreply.github.com`**，
+    否则不计入贡献图，还可能被 GH007 追溯拒收
+16. **electron-builder 每次必须换新输出目录**（`--config.directories.output=dist-installer-vN`），
+    安全删除钩子会拦下目录清理
+17. **本机打包需 `--config.win.signAndEditExecutable=false`** 绕过 winCodeSign
+    解压的符号链接权限失败（缺 `SeCreateSymbolicLinkPrivilege`）
+18. **`app.asar` 长期被进程占用**（错误码 32），清理要等进程退出
+19. **`npm install` 会在 esbuild postinstall 失败**（沙箱阻断 spawn），
+    需补装 `@esbuild/win32-x64`
+20. **同一文件禁止并行 Edit**（会静默丢改动）
 
 ## 7. 变更记录
 
 | 日期 | 改了什么 | 为什么 |
 |---|---|---|
-| 2026-10-02 | 建立项目骨架，复制上游源码（src/scripts/public/content） | 阶段 1 起点 |
-| 2026-10-02 | 产出 `docs/CROSS-PLATFORM-AUDIT.md`（macOS 依赖全量审计） | 阶段 1 交付：先摸清依赖再动手 |
-| 2026-10-02 | 确认技术选型 Electron（弃 Tauri） | 上游重度依赖 Three.js + Node 生态，Tauri 重写成本高于体积收益 |
+| 2026-10-02 | 建立项目骨架，复制上游源码 | 阶段 1 起点 |
+| 2026-10-02 | 产出 `docs/CROSS-PLATFORM-AUDIT.md` | 先摸清 macOS 依赖再动手 |
+| 2026-10-02 | 选型 Electron（弃 Tauri） | 上游重度依赖 Three.js + Node 生态 |
+| 2026-10-02 | 新增 `electron/main/platform.js` | 三平台端口探测/路径/打开方式 |
+| 2026-10-02 | 新增 `electron/main/library-scanner.js` + 9 个测试 | 需求 3：递归、去重、权限处理 |
+| 2026-10-02 | 新增 `electron/main/gpu.js` | 需求 4：NVIDIA 检测与回退 |
+| 2026-10-02 | 新增 `electron/main/main.js` / `store.js` / `library-service.js` | 桌面壳层主体 |
+| 2026-10-02 | 新增 `electron/renderer/motion.js` + `motion.css` | 需求 2：四维可调 + 尊重系统减弱动效 |
+| 2026-10-02 | 新增 `electron/renderer/desktop-ui.js` + `.css` | 需求 3：删 textarea，改为添加按钮 + 拖拽 |
+| 2026-10-02 | 改 `src/music-app.ts` / `src/main.ts` / `index.html` | 挂载桌面 UI、修正过时文案 |
+| 2026-10-02 | 改 `scripts/music-server.mjs` 加 `/electron/` 路由 | 让页面能加载桌面端资源 |
+| 2026-10-02 | 改 `scripts/launch-music.mjs` | 跨平台端口探测与浏览器打开 |
+| 2026-10-02 | 新增 WINDOWS.md / CONTRIBUTING.md / CI / Issue 与 PR 模板 | 需求 6 工程规范 |
+| 2026-10-02 | `NOTICE.md` 追加本项目署名与资产边界 | 需求 6 保留原作者署名 |
+| 2026-10-02 | 新增 `scripts/build-desktop-icons.mjs` | 零依赖生成 ico/png |
+| 2026-10-02 | **v0.4.0 首次发布** | — |
+| 2026-10-02 | 补「独立衍生作品声明」到 README 与 NOTICE | 明确非官方、无隶属背书 |
+| 2026-10-02 | 推送到 GitHub 并发布 v0.4.0 | <https://github.com/1494948/rhine-music-windows> |
+| 2026-10-02 | **v0.4.1 修复**：asarUnpack 加 node_modules | **根因：打包版服务找不到 music-metadata** |
+| 2026-10-02 | **v0.4.1 修复**：Electron 运行时判定改用 execPath 比对 | exe 名判断对打包版永远为 false |
+| 2026-10-02 | **v0.4.1 修复**：降级页显示真实错误与真实日志路径 | 原路径硬编码与productName 不符 |
+| 2026-10-02 | **v0.4.1**：自检 2 项 → 7 项 | 堵住让缺陷溜过去的缺口 |
+| 2026-10-02 | three / rolling-number 移入 devDependencies | 已被 Vite 打包，省 38 MB |
+| 2026-10-02 | 发布 v0.4.1（commit `4a99633`） | 修正版必须升版本号 |
+
