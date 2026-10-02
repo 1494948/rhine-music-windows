@@ -80,7 +80,13 @@ function bindImportEvents(host, library) {
           setStatus('')
           return
         }
-        await importRoots(picked.roots, setStatus)
+        const outcome = await importRoots(picked.roots, setStatus)
+        if (outcome?.imported) {
+          // 曲库服务已持久化 roots 并重建专辑——用返回的库状态刷新列表与统计
+          library.roots = outcome.imported.roots ?? library.roots
+          renderImportBlock(host, library)
+          setStatus(importSummary(outcome.imported), 'ok')
+        }
       } catch (error) {
         setStatus(`选择失败：${error.message}`, 'error')
       }
@@ -111,30 +117,36 @@ function bindImportEvents(host, library) {
  * @param {string[]} roots
  * @param {(text:string, kind?:string) => void} setStatus
  */
+/**
+ * 导入一批目录。
+ *
+ * 联动关键（2026-10-03 修复）：这里只做**主进程预检**（存在性/权限），
+ * 真正入库必须走 `onImport(roots)` → 上游 `POST /api/library/scan {roots}`。
+ * 之前直接调主进程扫描器（library:scan），它只返回文件统计、不入曲库——
+ * 结果是「扫到 774 个文件但 0 专辑/0 曲目、目录列表为空」，导入形同虚设。
+ *
+ * @param {string[]} roots
+ * @param {(text:string, kind?:string) => void} setStatus
+ */
 async function importRoots(roots, setStatus) {
-  setStatus(`正在扫描 ${roots.length} 个文件夹…`)
+  setStatus(`正在检查 ${roots.length} 个文件夹…`)
   try {
-    const result = await window.rhine.library.scan(roots)
-    const stats = result?.stats ?? {}
-    const parts = [
-      `已导入 ${stats.totalFiles ?? 0} 个音频文件`,
-      `${(stats.totalBytes ?? 0 / 1024 / 1024).toFixed(1)} MB`,
-    ].filter(Boolean)
-    setStatus(parts.join(' · '), 'ok')
+    // 预检：拿到权限/占用等错误，提前告诉用户（这些上游 API 也会报，但这里能更快反馈）
+    const precheck = await window.rhine.library.scan(roots)
+    const precheckProblems = []
+    if (precheck.rejectedRoots?.length) precheckProblems.push(`无法读取：${precheck.rejectedRoots.join('、')}`)
+    const denied = (precheck.errors ?? []).filter((e) => e.code === 'PERMISSION_DENIED')
+    if (denied.length) precheckProblems.push(`${denied.length} 处没有访问权限（${denied[0].message}）`)
+    if (precheckProblems.length) setStatus(precheckProblems.join('；'), 'warn')
 
-    // 把失败与拒绝的目录如实告诉用户，不静默吞掉
-    const problems = []
-    if (result.rejectedRoots?.length) {
-      problems.push(`无法读取：${result.rejectedRoots.join('、')}`)
-    }
-    const permission = (result.errors ?? []).filter((e) => e.code === 'PERMISSION_DENIED')
-    if (permission.length) {
-      problems.push(`${permission.length} 处没有访问权限（${permission[0].message}）`)
-    }
-    if (stats.truncated) problems.push('文件数量超过上限，扫描已截断')
-    if (problems.length) setStatus(`${parts.join(' · ')}｜${problems.join('；')}`, 'warn')
+    // 真正入库：交给上游曲库服务扫描、持久化 roots、生成专辑/曲目
+    if (!onImportRef) throw new Error('导入通道未初始化（onImport 缺失）')
+    setStatus('正在扫描入库（这一步在曲库较大时需要一点时间）…')
+    const imported = await onImportRef(roots)
+    return { precheck, imported }
   } catch (error) {
     setStatus(`导入失败：${error.message}`, 'error')
+    return null
   }
 }
 
@@ -185,15 +197,32 @@ export function enableDragImport() {
     notify(`正在导入 ${paths.length} 个文件夹…`)
     // 复用面板内的状态提示；面板未打开时给一条全局通知
     const status = document.querySelector('#import-status')
-    if (status) {
-      await importRoots(paths, (text, kind) => {
+    const setter = (text, kind) => {
+      if (status) {
         status.textContent = text
-        status.dataset.kind = kind
-      })
-    } else {
-      await importRoots(paths, (text) => notify(text))
+        status.dataset.kind = kind ?? ''
+      } else {
+        notify(text)
+      }
+    }
+    const outcome = await importRoots(paths, setter)
+    if (outcome?.imported) {
+      setter(importSummary(outcome.imported), 'ok')
+      // 面板开着的话同步刷新目录列表
+      const host = document.querySelector('#import-mount')
+      if (host && hostState) {
+        hostState.roots = outcome.imported.roots ?? hostState.roots
+        renderImportBlock(host, hostState)
+      }
     }
   })
+}
+
+/** 导入完成后的摘要文案：以曲库实际生成的专辑/曲目为准，不再显示体积。 */
+function importSummary(importedLibrary) {
+  const albums = importedLibrary?.albums?.length ?? 0
+  const tracks = importedLibrary?.albums?.reduce((sum, a) => sum + (a.tracks?.length ?? 0), 0) ?? 0
+  return `已入库 ${albums} 张专辑 · ${tracks} 首曲目`
 }
 
 /* ══════════════════════════动效设置 ══════════════════════════ */
@@ -334,10 +363,28 @@ export async function renderGpuSettings(host) {
  * @param {object} library
  * @param {() => void} onRescan
  */
-export function mountImport(host, library, onRescan) {
+/** 当前挂载的导入区块状态与入库回调（拖拽导入在面板外也要能用）。 */
+let hostState = null
+let onImportRef = null
+
+/**
+ * 在音乐库面板挂载导入区块。
+ * 非桌面环境（浏览器里打开上游 Web 版）时静默跳过，保留上游原有行为。
+ *
+ * @param {HTMLElement} host
+ * @param {object} library
+ * @param {() => void} onRescan
+ * @param {(roots: string[]) => Promise<object>} onImport
+ *   把目录交给上游曲库入库的回调（内部 POST /api/library/scan {roots}），
+ *   返回刷新后的 MusicLibrary。**这是导入真正生效的通道**——主进程扫描器
+ *   只做预检，不入曲库。
+ */
+export function mountImport(host, library, onRescan, onImport) {
   if (!isDesktop || !host) return false
   bootDesktop()
+  onImportRef = onImport ?? null
   const state = { ...library, onRescan }
+  hostState = state
   return renderImportBlock(host, state)
 }
 

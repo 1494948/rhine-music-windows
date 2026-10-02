@@ -72,6 +72,22 @@ if (TEST_MODE) {
 
 app.setAppUserModelId('com.rhinemusic.windows')
 
+// ★ 本地服务的请求绝不能走系统代理（2026-10-03 实测根因）：
+// 本机代理会把渲染进程对 127.0.0.1 的请求吞掉（Failed to fetch），
+// 界面因此永远显示 0 专辑/0 曲目——而主进程 fetch（Node）不走系统代理，
+// 同一时刻同一端点却有数据，极具迷惑性。这里让本地地址强制直连，
+// 外网请求（在线专辑资料等）仍走系统代理。必须在 app ready 之前设置。
+app.commandLine.appendSwitch('proxy-server', 'system')
+app.commandLine.appendSwitch('proxy-bypass-list', '127.0.0.1;localhost;<local>')
+
+/**
+ * 会话级强制直连本地服务（switch 方案实测不生效后的兜底）。
+ * 渲染进程对 127.0.0.1 的 fetch 被系统代理吞掉时，页面会永远停在
+ * 0 专辑/0 曲目。mode:'direct' 让整个会话不走任何代理——上游的外网
+ * 请求（在线专辑资料）由主进程/服务进程发出，不经过这个会话，不受影响。
+ */
+
+
 // ─────────────────────────── 设置与 GPU 启动开关 ───────────────────────────
 let store = null
 let settings = { ...DEFAULT_SETTINGS }
@@ -143,6 +159,12 @@ function themeColors(mode) {
 
 function resolvedTheme() {
   const pref = settings.theme ?? 'system'
+  // 上游主题值域是 day/night，主进程色板是 light/dark —— 必须做映射。
+  // 之前直接比对 'light'/'dark'，day/night 永远不匹配而落到系统判定，
+  // 结果浅色界面配了深色标题栏（用户实测：系统深色时标题栏全黑）。
+  // 用户显式选择 day/night 时以用户为准，仅 system 才跟随系统深浅色。
+  if (pref === 'day') return 'light'
+  if (pref === 'night') return 'dark'
   if (pref === 'light' || pref === 'dark') return pref
   return nativeTheme.shouldUseDarkColors ? 'dark' : 'light'
 }
@@ -315,6 +337,10 @@ function createTray() {
 
 // ─────────────────────────── 启动流程 ───────────────────────────
 app.whenReady().then(async () => {
+  // 必须在创建窗口之前完成：渲染进程对 127.0.0.1 的请求一旦走系统代理
+  // 就会被静默吞掉（fetch 挂起不返回），界面永远 0 专辑/0 曲目。
+  const { session } = require('electron')
+  await session.defaultSession.setProxy({ mode: 'direct' })
   store = new JsonStore(path.join(app.getPath('userData'), 'settings.json'), DEFAULT_SETTINGS)
   // store 里的值优先（含测试模式下的临时目录）
   settings = {
@@ -615,6 +641,14 @@ const RENDER_PROBE = `
       else out.pass.push('preload API 注入成功')
       if (!st) out.fail.push('startup 同步载荷缺失')
       else out.pass.push('启动信息就绪 platform=' + st.platform)
+      // 渲染进程内部直接 fetch 曲库：区分「网络层拿不到」与「数据流 bug」
+      try {
+        const lib = await fetch('/api/library').then((r) => r.json())
+        out.info.inPageAlbums = lib.albums?.length ?? -1
+        out.info.inPageRoots = (lib.roots ?? []).length
+      } catch (e) {
+        out.info.inPageAlbums = 'ERR:' + e.message
+      }
       return JSON.stringify(out)
     } catch (e) {
       out.fail.push('probe: ' + e.message)
@@ -809,6 +843,32 @@ async function runSelfTest() {
 }
 
 async function runShotMode() {
+  // RHINE_SHOT=秒数 可控制等待时长；截图时机太早会拍到加载中/空库状态
+  const waitSec = Number(process.env.RHINE_SHOT)
+  await new Promise((r) => setTimeout(r, waitSec > 0 ? waitSec * 1000 : 3000))
+  // 可选：先通过正式导入 API 预置曲库（RHINE_SHOT_IMPORT=<目录>）。
+  // 用于端到端验证「导入 → 曲库 → UI 显示」整条链；走的是与
+  // 「添加文件夹」按钮完全相同的 /api/library/scan 通道。
+  const importDir = process.env.RHINE_SHOT_IMPORT
+  if (importDir && service.portReady) {
+    try {
+      await fetch(`${service.baseUrl}/api/library/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ roots: [importDir] }),
+        signal: AbortSignal.timeout(15000),
+      })
+      await new Promise((r) => setTimeout(r, 4000))
+    } catch (error) {
+      console.error('[shot] 预置曲库失败:', error.message)
+    }
+  }
+  // 无人工交互的环境里开场动画不会自己结束，而 loadLibrary 在动画期间被
+  // 推迟（boot.active），导致截图永远拍到空库。自动点一次「跳过进场」，
+  // 等数据加载后再拍——截图必须反映真实数据状态。
+  await mainWindow.webContents
+    .executeJavaScript('document.querySelector(".music-boot-skip")?.click(); true', true)
+    .catch(() => {})
   await new Promise((r) => setTimeout(r, 3000))
   const outDir = path.join(PROJECT_DIR, 'preview', 'desktop')
   await fsp.mkdir(outDir, { recursive: true })

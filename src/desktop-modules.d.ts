@@ -15,6 +15,7 @@ declare module "@desktop/desktop-ui.js" {
     host: HTMLElement,
     library: unknown,
     onRescan: () => void,
+    onImport: (roots: string[]) => Promise<unknown>,
   ): boolean
   export function mountDesktopSettings(host: HTMLElement): boolean
   export function renderImportBlock(host: HTMLElement, library: unknown): boolean
