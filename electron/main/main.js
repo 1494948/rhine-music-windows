@@ -690,6 +690,89 @@ async function assertServiceHealthy(out) {
   }
 }
 
+/**
+ * 前端内容断言。
+ *
+ * 这一段是 v0.4.1 缺陷的教训：当时的自检只验证「进程和网络活着」，
+ * 而 build.files 漏了 dist/**，导致打包版里根本没有前端 ——
+ * 窗口 loadURL 对 404 响应照样「成功」，七项自检全部假阳性，
+ * 用户双击 exe 看到的是一行 404 错误 JSON。
+ *
+ * 现在必须断言「页面内容真的是改造后的界面」：
+ *  - 首页 200 且含 import-mount（桌面导入区块的挂载点）
+ *  - 不含 music-roots（旧 textarea 的 id —— 需求 3 的直接验证）
+ *  - 引用的入口 JS 资源能取到 200（证明 assets 完整）
+ */
+async function assertFrontendServed(out) {
+  const { baseUrl } = service
+  const page = await fetch(`${baseUrl}/`, { signal: AbortSignal.timeout(4000) })
+    .then((r) => r.text())
+    .catch((error) => null)
+  out.info.frontendFetched = Boolean(page)
+  if (!page) {
+    out.fail.push('首页无法获取（fetch 失败）')
+    return
+  }
+
+  out.info.frontendBytes = page.length
+  out.info.frontendIsErrorJson = page.trimStart().startsWith('{')
+
+  if (out.info.frontendIsErrorJson) {
+    out.fail.push('首页返回的是错误 JSON 而不是页面（dist 未进包或伺服失败）')
+    return
+  }
+
+  // 需求 3 的真正验证：textarea 必须从打包产物里消失、桌面挂载点必须存在。
+  // 注意检查对象是 **运行时 JS**（Vite 把面板模板打进 music-app-*.js），
+  // 不是 index.html 静态模板 —— 两者都测 index.html 会一真一假全错
+  //（2026-10-03 实测踩过：textarea 假阳性、import-mount 假阴性）。
+  const unpackedRoot = PROJECT_DIR.includes('app.asar')
+    ? PROJECT_DIR.replace(/app\.asar([\\/])/, 'app.asar.unpacked$1')
+    : PROJECT_DIR
+  const assetsDir = path.join(unpackedRoot, 'dist', 'assets')
+  let bundledJs = ''
+  try {
+    const entries = await fsp.readdir(assetsDir)
+    for (const name of entries) {
+      if (name.endsWith('.js')) {
+        bundledJs += await fsp.readFile(path.join(assetsDir, name), 'utf8')
+      }
+    }
+  } catch (error) {
+    out.fail.push(`无法读取打包产物 assets（${assetsDir}）：${error.message}`)
+    return
+  }
+  out.info.bundledJsBytes = bundledJs.length
+  out.info.hasImportMount = bundledJs.includes('import-mount')
+  out.info.hasLegacyTextarea = bundledJs.includes('music-roots')
+
+  if (out.info.hasLegacyTextarea) {
+    out.fail.push('打包 JS 仍含旧 textarea（music-roots）—— 需求 3 未生效或 dist 是旧构建')
+  } else {
+    out.pass.push('旧 textarea 已移除')
+  }
+  if (out.info.hasImportMount) {
+    out.pass.push('桌面导入区块挂载点存在')
+  } else {
+    out.fail.push('打包 JS 缺少 import-mount —— 不是改造后的构建')
+  }
+
+  // 入口 JS 资源可取（防「HTML 在、JS 丢」的半残包）
+  const jsMatch = /<script[^>]+src="([^"]+\.js)"/.exec(page)
+  if (jsMatch) {
+    const jsUrl = new URL(jsMatch[1], baseUrl).href
+    const jsRes = await fetch(jsUrl, { signal: AbortSignal.timeout(4000) })
+    out.info.entryJs = { url: jsUrl, status: jsRes.status, bytes: (await jsRes.arrayBuffer()).byteLength }
+    if (jsRes.status === 200 && out.info.entryJs.bytes > 1000) {
+      out.pass.push('入口 JS 资源完整')
+    } else {
+      out.fail.push(`入口 JS 资源异常：${jsUrl} status=${jsRes.status}`)
+    }
+  } else {
+    out.fail.push('首页没有引用任何 JS —— 不是有效的构建产物')
+  }
+}
+
 async function runSelfTest() {
   await new Promise((r) => setTimeout(r, 2500))
   /** @type {{pass:string[],fail:string[],info:object}} */
@@ -700,6 +783,13 @@ async function runSelfTest() {
     await assertServiceHealthy(out)
   } catch (error) {
     out.fail.push('服务断言异常：' + error.message)
+  }
+
+  // 前端内容断言：页面真的是改造后的界面，而不是 404 JSON
+  try {
+    await assertFrontendServed(out)
+  } catch (error) {
+    out.fail.push('前端断言异常：' + error.message)
   }
 
   // 再跑渲染层探针

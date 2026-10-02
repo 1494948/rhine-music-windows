@@ -1,7 +1,7 @@
 {
   "name": "rhine-music-windows",
   "productName": "Rhine Music",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "license": "MIT",
   "private": true,
   "author": {
@@ -20,12 +20,13 @@
     "start:safe": "electron . --no-sandbox --disable-gpu",
     "build:vite": "vite build",
     "typecheck": "tsc --noEmit",
-    "build:dir": "electron-builder --win --x64 --dir",
-    "build:portable": "electron-builder --win portable --x64",
-    "build": "npm run typecheck && electron-builder --win nsis portable --x64",
+    "build:dir": "npm run build:frontend && electron-builder --win --dir --x64",
+    "build:portable": "npm run build:frontend && electron-builder --win portable --x64",
+    "build": "npm run build:frontend && electron-builder --win nsis portable --x64",
     "package": "npm run build",
     "check:scanner": "node --test electron/test/*.test.cjs",
-    "format": "prettier --write src scripts electron index.html package.json"
+    "format": "prettier --write src scripts electron index.html package.json",
+    "build:frontend": "vite build"
   },
   "dependencies": {
     "music-metadata": "^11.15.0",
@@ -54,6 +55,7 @@
       "buildResources": "assets"
     },
     "files": [
+      "dist/**/*",
       "electron/**/*",
       "scripts/music-server.mjs",
       "scripts/music-library.mjs",
@@ -67,7 +69,10 @@
     "asarUnpack": [
       "scripts/**/*.mjs",
       "assets/**/*",
-      "node_modules/**/*"
+      "node_modules/**/*",
+      "dist/**/*",
+      "public/**/*",
+      "content/**/*"
     ],
     "asar": true,
     "npmRebuild": false,
