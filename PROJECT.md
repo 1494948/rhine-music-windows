@@ -63,12 +63,25 @@ npm run build:portable # 仅产出便携版
 
 | 项 | 值 |
 |---|---|
-| 目标仓库 | 用户自建 GitHub 仓库（`rhine-music-windows`） |
+| 仓库地址 | <https://github.com/1494948/rhine-music-windows> |
 | 分支 | `main` |
+| 远端 HEAD | `92b0473`（已与本地一致） |
+| 标签 | `v0.4.0` |
+| Release | <https://github.com/1494948/rhine-music-windows/releases/tag/v0.4.0>（id `401803182`） |
 | 产品名 | Rhine Music |
 | appId | `com.rhinemusic.windows` |
-| 产物命名 | `Rhine Music-<版本>-setup.exe` / `-portable.exe` |
-| 许可 | MIT（保留 LBEILC + RonaldDeng 署名，追加本项目） |
+| 产物命名 | `Rhine Music-<版本>-x64.exe`（安装版）/ `Rhine Music-<版本>-portable.exe`（便携版） |
+| 提交身份 | `1494948 <66010812+1494948@users.noreply.github.com>` |
+| 许可 | MIT。保留 LBEILC + RonaldDeng 署名，追加本项目（见 NOTICE.md） |
+
+**发布纪律（下次发布照做）**：
+
+1. 用 `C:\Program Files\Git\cmd\git.exe`，TLS 需 `GIT_SSL_NO_VERIFY=true`，
+   凭据需 `-c credential.helper=manager`（全局 helper 是空值，会清掉 system 的 manager）
+2. 推送前先 `ls-remote` 探远端，不盲目 push
+3. 提交邮箱必须用 noreply 地址，否则可能被 GH007 拒收
+4. exe 走 Release 附件，**不进仓库**（>100 MB 无法 push）
+5. 建仓库用 API 且 `auto_init: false`，避免产生多余的 Initial commit
 
 ## 6. 已知的坑（本机实测）
 
