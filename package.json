@@ -1,0 +1,96 @@
+{
+  "name": "rhine-music-windows",
+  "productName": "Rhine Music",
+  "version": "0.4.0",
+  "license": "MIT",
+  "private": true,
+  "author": {
+    "name": "Rhine Music Windows contributors",
+    "note": "基于 RonaldDeng/Rhine-Music-Demo (MIT) 与 LBEILC/RhineLabUI (MIT) 改造"
+  },
+  "description": "本地音乐播放器桌面版 —— Windows 可安装 exe，含 Apple Music 风格动效、文件夹导入与GPU 加速",
+  "main": "electron/main/main.js",
+  "type": "commonjs",
+  "scripts": {
+    "export:archives": "node scripts/export-records.mjs",
+    "dev:vite": "vite --host 127.0.0.1",
+    "dev": "cross-env RHINE_DEV=1 electron .",
+    "dev:safe": "cross-env RHINE_DEV=1 electron . --no-sandbox --disable-gpu",
+    "start": "electron .",
+    "start:safe": "electron . --no-sandbox --disable-gpu",
+    "build:vite": "vite build",
+    "typecheck": "tsc --noEmit",
+    "build:dir": "electron-builder --win --x64 --dir",
+    "build:portable": "electron-builder --win portable --x64",
+    "build": "npm run typecheck && electron-builder --win nsis portable --x64",
+    "package": "npm run build",
+    "check:scanner": "node --test electron/test/*.test.cjs",
+    "format": "prettier --write src scripts electron index.html package.json"
+  },
+  "dependencies": {
+    "@kitlangton/rolling-number": "0.4.1",
+    "music-metadata": "^11.15.0",
+    "opencc-js": "^1.4.2",
+    "three": "^0.183.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.183.0",
+    "cross-env": "^7.0.3",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "prettier": "^3.9.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "build": {
+    "appId": "com.rhinemusic.windows",
+    "productName": "Rhine Music",
+    "copyright": "Copyright (c) 2026 LBEILC, RonaldDeng, Rhine Music Windows contributors",
+    "directories": {
+      "output": "dist-installer",
+      "buildResources": "assets"
+    },
+    "files": [
+      "electron/**/*",
+      "scripts/music-server.mjs",
+      "scripts/music-library.mjs",
+      "scripts/album-introductions.mjs",
+      "scripts/archive-content.mjs",
+      "public/**/*",
+      "content/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
+      "scripts/**/*.mjs",
+      "assets/**/*"
+    ],
+    "asar": true,
+    "npmRebuild": false,
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] },
+        { "target": "portable", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico",
+      "artifactName": "Rhine Music-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "installerLanguages": ["zh_CN"],
+      "language": "2052",
+      "deleteAppDataOnUninstall": false,
+      "shortcutName": "Rhine Music"
+    },
+    "portable": {
+      "artifactName": "Rhine Music-${version}-portable.exe"
+    }
+  }
+}

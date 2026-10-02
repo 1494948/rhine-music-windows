@@ -1,0 +1,199 @@
+/**
+ * 桌面端新增 UI 的样式：导入区块、目录列表、设置项。
+ * 风格与上游 music.css 保持一致，不引入新的设计语言。
+ */
+
+.import-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin: 12px 0 8px;
+}
+
+.drop-hint {
+  margin: 12px 0;
+  padding: 18px;
+  border: 2px dashed var(--accent, #fa2b56);
+  border-radius: 14px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--accent, #fa2b56);
+  background: color-mix(in srgb, var(--accent, #fa2b56) 8%, transparent);
+}
+
+.root-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.root-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  min-width: 0;
+}
+
+.root-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  opacity: 0.85;
+  user-select: all;
+}
+
+.root-ops {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.icon-button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  line-height: 1;
+  color: inherit;
+  opacity: 0.7;
+  transition: opacity var(--motion-duration-fast, 156ms) var(--motion-ease, ease),
+              background var(--motion-duration-fast, 156ms) var(--motion-ease, ease);
+}
+
+.icon-button:hover {
+  opacity: 1;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+}
+
+.empty-hint {
+  opacity: 0.6;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+/* 设置页：开关行 */
+.switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 0;
+}
+
+.switch-row > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.switch-row > span small {
+  opacity: 0.65;
+  font-size: 12px;
+}
+
+/* <label> 默认 inline，宽高无效 —— 必须显式给 display */
+.switch {
+  display: inline-block;
+  position: relative;
+  width: 44px;
+  height: 26px;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.switch input {
+  position: absolute;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: pointer;
+}
+
+.switch .track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 22%, transparent);
+  transition: background var(--motion-duration, 260ms) var(--motion-ease, ease);
+}
+
+.switch .track::after {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.3);
+  transition: transform var(--motion-duration, 260ms) var(--motion-ease-emphasized, cubic-bezier(0.2, 0, 0, 1));
+}
+
+.switch input:checked + .track {
+  background: var(--accent, #fa2b56);
+}
+
+.switch input:checked + .track::after {
+  transform: translateX(18px);
+}
+
+.switch input:focus-visible + .track {
+  outline: 2px solid var(--accent, #fa2b56);
+  outline-offset: 2px;
+}
+
+/* GPU 摘要 */
+.gpu-summary {
+  margin: 14px 0;
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.gpu-summary > div {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 10px;
+  align-items: baseline;
+}
+
+.gpu-summary dt {
+  opacity: 0.6;
+}
+
+.gpu-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 状态文案语义色 */
+.scan-status[data-kind='ok'] { color: #30a46c; }
+.scan-status[data-kind='warn'] { color: #f5a524; }
+.scan-status[data-kind='error'] { color: #e5484d; }
+
+select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+}
+
+select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}

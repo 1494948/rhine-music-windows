@@ -1,0 +1,31 @@
+name: 提交 Issue / PR 模板
+description: 贡献前必读——尤其是署名与许可要求
+labels: [meta]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## 贡献前请确认
+
+        本项目是上游 MIT 项目的 Windows 发行版，**三份署名都必须保留**：
+
+        | 范围 | 作者 |
+        |---|---|
+        | 音乐播放器适配及后续修改 | Copyright (c) 2026 RonaldDeng |
+        | 原版 RhineLabUI | Copyright (c) 2026 LBEILC |
+        | Windows 桌面发行版改造 | Rhine Music Windows contributors |
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前自查
+      options:
+        - label: 我没有删除或替换上游的版权声明与署名
+        - label: 我没有提交音乐文件、专辑封面或私人曲库数据
+        - label: 我没有提交包含私人曲名的截图
+        - label: 我知道非代码资产（art/、图标、截图、typing-preview.wav）不适用 MIT
+
+  - type: textarea
+    id: other
+    attributes:
+      label: 其他说明

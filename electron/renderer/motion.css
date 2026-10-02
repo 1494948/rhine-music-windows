@@ -1,0 +1,162 @@
+/**
+ * Apple Music 风格动效样式。
+ *
+ * 所有时长/缓动都走 CSS 变量，由 motion.js 在运行时写入：
+ *   --motion-duration / --motion-duration-fast / --motion-duration-slow
+ *   --motion-ease / --motion-ease-emphasized / --motion-ease-enter
+ *
+ * 关闭动效时（html[data-motion="off"]）时长变量为 0ms，
+ * transition 依然声明但瞬时完成 —— 这样不会破坏任何依赖 transitionend 的逻辑。
+ */
+
+:root {
+  --motion-duration: 260ms;
+  --motion-duration-fast: 156ms;
+  --motion-duration-slow: 416ms;
+  --motion-ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --motion-ease-emphasized: cubic-bezier(0.2, 0, 0, 1);
+  --motion-ease-enter: cubic-bezier(0.05, 0.7, 0.1, 1);
+  --motion-blur: 20px;
+}
+
+/* ── 窗口进场：Apple Music 启动时的轻微放大淡入 ── */
+@keyframes window-enter {
+  from { opacity: 0; transform: scale(0.985) translateY(6px); }
+  to   { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+html[data-motion='on'] body {
+  animation: window-enter var(--motion-duration-slow) var(--motion-ease-enter) both;
+}
+
+/* ── 视图切换：交叉淡入 + 位移 ── */
+@keyframes view-enter {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.view-enter {
+  animation: view-enter var(--motion-duration) var(--motion-ease-enter) both;
+}
+
+/* ── 专辑卡片：Apple Music 网格的 hover 抬升与按压回弹 ── */
+@keyframes card-enter {
+  from { opacity: 0; transform: translateY(14px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+html[data-motion='on'] .album-card,
+html[data-motion='on'] .archive-card {
+  animation: card-enter var(--motion-duration-slow) var(--motion-ease-enter) both;
+  transition:
+    transform var(--motion-duration) var(--motion-ease-emphasized),
+    box-shadow var(--motion-duration) var(--motion-ease);
+}
+
+/* 逐个延迟入场，形成「瀑布」效果。用 nth-child 限幅，避免长列表末尾等太久。 */
+html[data-motion='on'] .album-card:nth-child(1),
+html[data-motion='on'] .archive-card:nth-child(1) { animation-delay: 0ms; }
+html[data-motion='on'] .album-card:nth-child(2),
+html[data-motion='on'] .archive-card:nth-child(2) { animation-delay: 28ms; }
+html[data-motion='on'] .album-card:nth-child(3),
+html[data-motion='on'] .archive-card:nth-child(3) { animation-delay: 56ms; }
+html[data-motion='on'] .album-card:nth-child(4),
+html[data-motion='on'] .archive-card:nth-child(4) { animation-delay: 84ms; }
+html[data-motion='on'] .album-card:nth-child(n+5),
+html[data-motion='on'] .archive-card:nth-child(n+5) { animation-delay: 110ms; }
+
+html[data-motion='on'] .album-card:hover,
+html[data-motion='on'] .archive-card:hover {
+  transform: translateY(-4px) scale(1.02);
+}
+
+html[data-motion='on'] .album-card:active,
+html[data-motion='on'] .archive-card:active {
+  transform: scale(0.975);
+  transition-duration: var(--motion-duration-fast);
+}
+
+/* ── 封面缩放：播放页大图切换 ── */
+.cover-zoom {
+  transform-origin: center center;
+  will-change: transform;
+  transition: transform var(--motion-duration-slow) var(--motion-ease-emphasized);
+}
+
+/* ── 播放列表项切换：位移淡入 ── */
+@keyframes track-swap {
+  from { opacity: 0; transform: translateX(-8px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+
+html[data-motion='on'] .track-swap {
+  animation: track-swap var(--motion-duration) var(--motion-ease-enter) both;
+}
+
+/* ── 面板/弹层：向上滑入 ── */
+@keyframes panel-enter {
+  from { opacity: 0; transform: translateY(16px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+html[data-motion='on'] .panel-enter {
+  animation: panel-enter var(--motion-duration) var(--motion-ease-emphasized) both;
+}
+
+/* ── 开关切换 ── */
+@keyframes toggle-pulse {
+  0%   { transform: scale(1); }
+  45%  { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+
+html[data-motion='on'] .switch.on {
+  animation: toggle-pulse var(--motion-duration) var(--motion-ease-emphasized);
+}
+
+/* ── 加载指示：Apple Music 的三点脉冲 ── */
+@keyframes dot-pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: scale(0.82); }
+  30%           { opacity: 1;    transform: scale(1); }
+}
+
+html[data-motion='on'] .loading-dots span {
+  animation: dot-pulse 1.1s var(--motion-ease) infinite;
+}
+html[data-motion='on'] .loading-dots span:nth-child(2) { animation-delay: 0.14s; }
+html[data-motion='on'] .loading-dots span:nth-child(3) { animation-delay: 0.28s; }
+
+/* ═══════════════════════════════════════════════════════════
+   性能影响说明（设置页会展示这张表）
+   ═══════════════════════════════════════════════════════════ */
+
+/* performance 模式：关闭毛玻璃。Windows 上 backdrop-filter
+   在大元素上的开销是普通 box-shadow 的数倍，且会触发额外的合成层。 */
+html[data-motion-perf='performance'] .album-card:hover,
+html[data-motion-perf='performance'] .archive-card:hover {
+  box-shadow: none;
+  transform: translateY(-2px);
+}
+
+html[data-motion-perf='performance'] .cover-zoom {
+  transition-property: transform;
+}
+
+/* 关闭动效时兜底：不要留任何 transform 残留 */
+html[data-motion='off'] .album-card,
+html[data-motion='off'] .archive-card,
+html[data-motion='off'] .cover-zoom {
+  animation: none !important;
+  transition: none !important;
+  transform: none !important;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

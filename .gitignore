@@ -1,0 +1,14 @@
+node_modules/
+dist/
+dist-installer/
+dist-installer-v*/
+release/
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+music-data*/
+.env
+.env.local
+*.tsbuildinfo

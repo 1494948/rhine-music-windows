@@ -1,0 +1,90 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: 类型检查与单元测试
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: TypeScript 类型检查
+        run: npm run typecheck
+
+      - name: 单元测试（扫描器）
+        run: npm run check:scanner
+
+      - name: 语法检查（主进程与 preload）
+        shell: pwsh
+        run: |
+          $files = Get-ChildItem -Path electron/main, electron/preload -Filter *.js -Recurse
+          $fail = 0
+          foreach ($f in $files) {
+            node --check $f.FullName
+            if ($LASTEXITCODE -ne 0) { $fail = 1; Write-Host "FAIL $($f.Name)" }
+            else { Write-Host "OK   $($f.Name)" }
+          }
+          exit $fail
+
+      - name: 上游脚本回归测试
+        run: npm run check:music
+
+  build:
+    name: 构建 Windows 产物
+    runs-on: windows-latest
+    needs: verify
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建安装包与便携版
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
+          ELECTRON_BUILDER_BINARIES_MIRROR: https://npmmirror.com/mirrors/electron-builder-binaries/
+        run: npx electron-builder --win nsis portable --x64
+
+      - name: 校验产物
+        shell: pwsh
+        run: |
+          $dir = 'dist-installer'
+          $exes = Get-ChildItem -Path $dir -Filter *.exe -File
+          if ($exes.Count -eq 0) { throw '没有产出 exe，构建失败' }
+          foreach ($e in $exes) {
+            $bytes = [System.IO.File]::ReadAllBytes($e.FullName)[0..1]
+            $magic = [char]$bytes[0] + [char]$bytes[1]
+            if ($magic -ne 'MZ') { throw "$($e.Name) 不是有效的 Windows 可执行文件" }
+            "{0,-50} {1,8:N1} MB  MZ 校验通过" -f $e.Name, ($e.Length / 1MB)
+          }
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: rhine-music-windows
+          path: dist-installer/*.exe
+          retention-days: 14
