@@ -766,9 +766,12 @@ async function assertFrontendServed(out) {
   const assetsDir = path.join(unpackedRoot, 'dist', 'assets')
   let bundledJs = ''
   try {
+    // 只检查 music-app chunk：面板模板与扫描逻辑都在这里。
+    // desktop-ui chunk 里保留着已停用导入函数的死代码（含 import-mount 字符串），
+    // 功能上 return false 永不挂载——计入断言会造成误报（2026-10-03 实测）。
     const entries = await fsp.readdir(assetsDir)
     for (const name of entries) {
-      if (name.endsWith('.js')) {
+      if (name.startsWith('music-app-') && name.endsWith('.js')) {
         bundledJs += await fsp.readFile(path.join(assetsDir, name), 'utf8')
       }
     }
@@ -777,18 +780,20 @@ async function assertFrontendServed(out) {
     return
   }
   out.info.bundledJsBytes = bundledJs.length
-  out.info.hasImportMount = bundledJs.includes('import-mount')
-  out.info.hasLegacyTextarea = bundledJs.includes('music-roots')
+  // 2026-10-03 按用户要求恢复作者原版的 textarea 导入方式——
+  // 断言语义随之反转：textarea 必须回来，桌面导入 UI 必须消失
+  out.info.hasOriginalTextarea = bundledJs.includes('music-roots')
+  out.info.hasDesktopImportUi = bundledJs.includes('import-mount')
 
-  if (out.info.hasLegacyTextarea) {
-    out.fail.push('打包 JS 仍含旧 textarea（music-roots）—— 需求 3 未生效或 dist 是旧构建')
+  if (out.info.hasOriginalTextarea) {
+    out.pass.push('作者原版 textarea 导入已恢复')
   } else {
-    out.pass.push('旧 textarea 已移除')
+    out.fail.push('打包 JS 缺少 music-roots —— 原版 textarea 未恢复或 dist 是旧构建')
   }
-  if (out.info.hasImportMount) {
-    out.pass.push('桌面导入区块挂载点存在')
+  if (out.info.hasDesktopImportUi) {
+    out.fail.push('打包 JS 仍含桌面导入 UI（import-mount）—— 未按用户要求移除')
   } else {
-    out.fail.push('打包 JS 缺少 import-mount —— 不是改造后的构建')
+    out.pass.push('桌面导入 UI 已移除')
   }
 
   // 入口 JS 资源可取（防「HTML 在、JS 丢」的半残包）

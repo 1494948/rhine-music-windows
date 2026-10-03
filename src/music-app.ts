@@ -1071,22 +1071,8 @@ function openPanel(next: Panel) {
 }
 function renderLibraryPanel() {
   $("#panel-body").innerHTML =
-    `<p class="panel-intro">根目录中的每首单曲各是一张卡片，优先使用自身内嵌封面。子文件夹按专辑展示，优先使用文件夹封面。</p><div id="import-mount"></div><div id="scan-status" class="scan-status"></div><div class="library-metrics"><div><b>${library.albums.length}</b><span>专辑</span></div><div><b>${library.albums.reduce((n, a) => n + a.tracks.length, 0)}</b><span>曲目</span></div><div><b>${library.genres.filter((g) => library.albums.some((a) => a.genreId === g.id)).length}</b><span>流派</span></div></div><section class="panel-section"><h3>在线资料与本地分类</h3><p>向 MusicBrainz 查询专辑名称与艺术家，补充流派和制作人员；音乐文件留在本机。已有资料使用缓存，人工分类优先保留。</p><button data-action="enrich-library" class="text-button">补充缺失的在线资料 ↗</button><button data-action="edit-genres" class="text-button">编辑流派归并规则 ↗</button></section><section class="panel-section"><h3>封面显示</h3><p>方形、竖版、横版封面均保持原始比例，完整放入卡片正面。没有封面时显示专辑名称占位，不使用其他专辑的图片。</p>${!library.albums.length ? '<button data-action="demo" class="text-button">查看演示封面 ↗</button>' : ""}</section>`;
+    `<p class="panel-intro">根目录中的每首单曲各是一张卡片，优先使用自身内嵌封面。子文件夹按专辑展示，优先使用文件夹封面。</p><label class="field-label" for="music-roots">音乐文件夹<span>多个目录各占一行</span></label><textarea id="music-roots" rows="3" placeholder="C://Users//你的用户名//Music">${esc(library.roots.map((r) => r.path).join("\n"))}</textarea><div class="panel-actions"><button class="primary-button" data-action="scan">保存目录并扫描 ↗</button><button data-action="rescan">重新扫描</button></div><div id="scan-status" class="scan-status"></div><div class="library-metrics"><div><b>${library.albums.length}</b><span>专辑</span></div><div><b>${library.albums.reduce((n, a) => n + a.tracks.length, 0)}</b><span>曲目</span></div><div><b>${library.genres.filter((g) => library.albums.some((a) => a.genreId === g.id)).length}</b><span>流派</span></div></div><section class="panel-section"><h3>在线资料与本地分类</h3><p>向 MusicBrainz 查询专辑名称与艺术家，补充流派和制作人员；音乐文件留在本机。已有资料使用缓存，人工分类优先保留。</p><button data-action="enrich-library" class="text-button">补充缺失的在线资料 ↗</button><button data-action="edit-genres" class="text-button">编辑流派归并规则 ↗</button></section><section class="panel-section"><h3>封面显示</h3><p>方形、竖版、横版封面均保持原始比例，完整放入卡片正面。没有封面时显示专辑名称占位，不使用其他专辑的图片。</p>${!library.albums.length ? '<button data-action="demo" class="text-button">查看演示封面 ↗</button>' : ""}</section>`;
   updateScanStatus();
-  // 桌面版（Electron）：用「添加文件夹」按钮 + 拖拽导入替换上游的路径输入框
-  void DesktopUI.mountImport(
-    $("#import-mount"),
-    library,
-    () => scan(),
-    // 桌面导入的入库通道：让曲库服务持久化 roots 并重建专辑，再刷新界面
-    async (roots) => {
-      const next = await request<MusicLibrary>("/api/library/scan", { roots });
-      await receiveLibrary(next);
-      clearTimeout(pollTimer);
-      pollTimer = setTimeout(() => void loadLibrary(), 600);
-      return next;
-    },
-  );
   const configSection = document.createElement("section");
   configSection.className = "panel-section";
   configSection.id = "online-config";
@@ -1186,24 +1172,27 @@ async function editGenres() {
   }
 }
 /**
- * 扫描音乐库。
+ * 扫描音乐库（作者原版实现）。
  *
- * 跨平台改造（2026-10-02）：原实现从 `#music-roots` textarea 读取目录列表，
- * 该入口已按需求删除（placeholder 写死 macOS 路径，且允许手输错误路径）。
- *
- * 2026-10-03：恢复显式 roots 入参——桌面「添加文件夹/拖拽」导入的**入库通道**
- * 就是这里（POST /api/library/scan {roots}，服务端会持久化 roots 并重建专辑）。
- * 之前桌面导入只调主进程扫描器拿文件统计、从未入库，导致 0 专辑/0 曲目、
- * 目录列表为空。无参调用保持上游行为（按已配置 roots 全量重扫）。
+ * 2026-10-03 恢复：桌面版自定义的「添加文件夹按钮 + 拖拽」导入方案与
+ * 上游曲库链路兼容性差，按用户要求回退为作者原版方式——
+ * 设置页手填目录（每行一个）→「保存目录并扫描」→ POST /api/library/scan {roots}。
+ * 该通道由上游曲库服务负责持久化 roots 与重建专辑，实测可用。
  */
-async function scan(roots?: string[]) {
+async function scan(saveRoots = false) {
   if (scanSubmitting || library.scan.running) return;
   scanSubmitting = true;
   clearTimeout(scanRefreshTimer);
   scanRefreshTimer = undefined;
   ++libraryStateVersion;
   try {
-    const next = await request<MusicLibrary>("/api/library/scan", roots?.length ? { roots } : {});
+    const roots = saveRoots
+      ? $<HTMLTextAreaElement>("#music-roots")
+          .value.split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+      : undefined;
+    const next = await request<MusicLibrary>("/api/library/scan", roots ? { roots } : {});
     ++libraryStateVersion; // Discard polls started before this accepted scan.
     notify("开始扫描音乐库，已有专辑可以继续浏览。");
     await receiveLibrary(next);
@@ -1372,7 +1361,7 @@ document.addEventListener("click", (e) => {
       player.stop();
       break;
     case "scan":
-      void scan();
+      void scan(true);
       break;
     case "rescan":
       void scan();

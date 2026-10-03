@@ -380,6 +380,9 @@ let onImportRef = null
  *   只做预检，不入曲库。
  */
 export function mountImport(host, library, onRescan, onImport) {
+  // 已停用（2026-10-03）：音乐添加恢复作者原版的 textarea 方式，
+  // 本函数保留仅供回溯；动效/GPU 设置区块（mountDesktopSettings）不受影响。
+  return false
   if (!isDesktop || !host) return false
   bootDesktop()
   onImportRef = onImport ?? null
@@ -415,7 +418,8 @@ export function bootDesktop() {
   if (startup?.settings?.motion) motion.apply(startup.settings.motion)
   window.rhine.onMotionChanged((next) => motion.apply(next))
 
-  enableDragImport()
+  // 拖拽导入已随「桌面导入方案」一并停用（2026-10-03 按用户要求恢复
+  // 作者原版的 textarea 导入方式）；enableDragImport 保留但不再调用
 
   // 收集渲染层错误，供自检断言
   window.__RHINE_ERRORS__ = []
