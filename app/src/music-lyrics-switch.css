@@ -1,0 +1,324 @@
+/* The detail/lyrics switch and the lyrics surface.
+
+   Two rules govern everything here:
+
+   1. Only composited properties move — transform, opacity, clip-path. Nothing
+      in the drag path can trigger layout or reflow text.
+   2. The docking heights are custom properties, so where the bar rests is a
+      styling decision that can be tuned on a real screen without touching the
+      controller. */
+
+.music-detail {
+  /* The bar's resting dock and its travel end, measured from the detail page's
+     own edges. The reference places it in the blank band above the ALBUM line. */
+  --switch-top: 84px;
+  --switch-bottom: 68px;
+}
+
+/* ------------------------------------------------------------------ 小白条 */
+
+.detail-switch {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 108px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  cursor: grab;
+  pointer-events: auto;
+  /* JavaScript writes this transform for the travel, so the initial value has
+     to live in the same property to avoid a one-frame jump on first paint. */
+  transform: translate3d(-50%, var(--switch-top, 84px), 0);
+  will-change: transform;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* `.music-app button` sets `touch-action: manipulation`, which would hand the
+   vertical gesture back to the scroller mid-drag. The drag needs it disabled,
+   and the extra class is what wins that comparison. */
+.music-detail .detail-switch {
+  touch-action: none;
+}
+
+.detail-switch.dragging {
+  cursor: grabbing;
+}
+
+.detail-switch-glow,
+.detail-switch-core {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 999px;
+  transform: translateX(-50%);
+  /* The float rides the `translate` longhand, which is applied before
+     `transform`, so it can never fight the centring above. `scale` carries the
+     hover so that a hover never restarts the animation. */
+  animation: switch-float 3.8s ease-in-out infinite alternate;
+}
+
+/* Hazy accent bloom, the same tone the selected card uses. */
+.detail-switch-glow {
+  width: 86px;
+  height: 22px;
+  margin: -11px 0 0;
+  background: radial-gradient(
+    50% 50% at 50% 50%,
+    var(--accent),
+    transparent 72%
+  );
+  filter: blur(4px);
+  opacity: 0.3;
+  transition: opacity 320ms ease;
+}
+
+/* The bar itself: a hairline of ink, brightest at the middle. */
+.detail-switch-core {
+  width: 48px;
+  height: 6px;
+  margin: -3px 0 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    var(--ink) 20%,
+    var(--ink) 80%,
+    transparent
+  );
+  opacity: 0.5;
+  transition: opacity 260ms ease, scale 260ms ease;
+}
+
+@keyframes switch-float {
+  from {
+    translate: 0 -1.6px;
+  }
+  to {
+    translate: 0 1.6px;
+  }
+}
+
+.detail-switch:not(.locked):hover .detail-switch-core {
+  opacity: 0.82;
+  scale: 1 1.4;
+}
+
+.detail-switch:not(.locked):hover .detail-switch-glow {
+  opacity: 0.52;
+}
+
+/* Locked: the float stops outright and the bar reads as a solid mark. This is
+   the whole visible meaning of the lock — the drag stays available. */
+.detail-switch.locked .detail-switch-core,
+.detail-switch.locked .detail-switch-glow {
+  animation: none;
+}
+
+.detail-switch.locked .detail-switch-core {
+  opacity: 0.92;
+  scale: 1 1.15;
+}
+
+.detail-switch.locked .detail-switch-glow {
+  opacity: 0.16;
+}
+
+.detail-switch.dragging .detail-switch-core,
+.detail-switch.dragging .detail-switch-glow {
+  animation-play-state: paused;
+}
+
+.detail-switch.reduce-motion .detail-switch-core,
+.detail-switch.reduce-motion .detail-switch-glow {
+  animation: none;
+  transition: none;
+}
+
+/* ---------------------------------------------------------------- 歌词面板 */
+
+.music-lyrics {
+  position: absolute;
+  /* Mirrors #album-detail-content exactly, so the lyrics always land in the
+     detail column's own footprint. */
+  left: 58%;
+  right: 4.5%;
+  top: var(--detail-content-top, 170px);
+  bottom: 52px;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 15px;
+  opacity: 0;
+  /* A display surface, not a target: nothing here should swallow a gesture. */
+  pointer-events: none;
+  will-change: transform, opacity;
+  --line-h: 52px;
+}
+
+.music-app[data-layout="desktop"] .music-lyrics,
+.music-app[data-layout="compact"] .music-lyrics {
+  left: 52%;
+}
+
+.music-lyrics[hidden] {
+  display: none;
+}
+
+.lyrics-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.lyrics-head small {
+  font-size: 7px;
+  letter-spacing: 1.6px;
+  color: var(--muted);
+}
+
+.lyrics-head i {
+  font-style: normal;
+}
+
+.lyrics-credit {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lyrics-viewport {
+  position: relative;
+  flex: 1;
+  overflow: hidden;
+  /* The top-down entrance: the opaque region grows with the drag instead of a
+     per-line delay, so one custom property drives the whole reveal. */
+  -webkit-mask-image: linear-gradient(
+    180deg,
+    #000 calc(var(--reveal, 1) * 118% - 8%),
+    transparent calc(var(--reveal, 1) * 118% + 4%)
+  );
+  mask-image: linear-gradient(
+    180deg,
+    #000 calc(var(--reveal, 1) * 118% - 8%),
+    transparent calc(var(--reveal, 1) * 118% + 4%)
+  );
+}
+
+.lyrics-track-line {
+  position: absolute;
+  inset: 0;
+  transform: translate3d(0, var(--shift, 0px), 0);
+  will-change: transform;
+}
+
+.lyric-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(var(--i, 0) * var(--line-h));
+  height: var(--line-h);
+  display: flex;
+  align-items: center;
+  font-size: clamp(15px, 1.5vw, 20px);
+  line-height: 1.32;
+  color: var(--ink);
+  /* Distance from the singing line sets opacity, blur and emphasis. The
+     controller writes only `data-d` and `--blur`, once per line change. */
+  filter: var(--blur, none);
+  opacity: 0.14;
+  scale: 1;
+  transform-origin: left center;
+  transition: opacity 300ms ease, scale 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* Four distance tiers from the singing line. The base value is the `far` tier
+   as well, which covers lines mounted before the first clock tick. */
+.lyric-line[data-d="far"] {
+  opacity: 0.14;
+}
+
+.lyric-line[data-d="mid"] {
+  opacity: 0.3;
+}
+
+.lyric-line[data-d="near"] {
+  opacity: 0.56;
+}
+
+.lyric-line[data-d="0"] {
+  opacity: 1;
+  scale: 1.04;
+}
+
+/* Unsynced lyrics are a reading view: everything legible, nothing emphasised. */
+.music-lyrics.lyrics-unsynced .lyric-line {
+  opacity: 0.76;
+  filter: none;
+  scale: 1;
+}
+
+.lyric-main,
+.lyric-fill {
+  display: block;
+  width: 100%;
+  max-height: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+/* The karaoke layer: an accent copy clipped to the sweep position. Clipping
+   paints nothing new, so the per-frame cost is one property write. */
+.lyric-fill {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  color: var(--accent);
+  clip-path: inset(0 calc((1 - var(--p, 0)) * 100%) 0 0);
+}
+
+/* A one-pixel rule under the singing line gives the sweep a second, quieter
+   readout that stays legible when the line is long. */
+.lyric-line[data-d="0"]::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 7px;
+  width: 100%;
+  height: 1px;
+  background: var(--line);
+  transform: scaleX(var(--line-p, 0));
+  transform-origin: left center;
+}
+
+.music-lyrics.lyrics-unsynced .lyric-line[data-d="0"]::after {
+  display: none;
+}
+
+.lyrics-note {
+  flex-shrink: 0;
+  font-size: 10px;
+  line-height: 1.85;
+  color: var(--muted);
+  margin: 0;
+  padding-left: 11px;
+  border-left: 1px solid var(--line);
+}
+
+.lyrics-note[hidden] {
+  display: none;
+}
+
+.music-lyrics.reduce-motion .lyric-line {
+  transition: none;
+}

@@ -1,0 +1,176 @@
+/* Album archive panel — the 发行背景 / 专辑意义 / 档案要点 block that sits
+   between the parameter table and the tabs.
+
+   It reads as a continuation of the reading column: same type scale as
+   .album-facts, no card, no shadow, separated by hairlines only. The status
+   chip is the one concession, because which layer the text came from is part of
+   the information. */
+
+/* Wrapper that carries the detail column's exit transform. It must never
+   intercept a pointer: .music-back and the reading column opt in themselves. */
+.detail-surface {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+.album-archive {
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+  margin-top: 24px;
+  padding-top: 22px;
+  border-top: 1px solid var(--line);
+}
+
+.archive-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.archive-head small {
+  font-size: 7px;
+  letter-spacing: 1.6px;
+  color: var(--muted);
+}
+
+.archive-head i {
+  font-style: normal;
+}
+
+.archive-status {
+  font-size: 8px;
+  letter-spacing: 0.6px;
+  color: var(--accent);
+  border: 1px solid var(--line);
+  padding: 3px 7px;
+  white-space: nowrap;
+}
+
+/* A derived panel says so quietly; it is not a warning, just a provenance. */
+.album-archive[data-status="derived"] .archive-status {
+  color: var(--muted);
+}
+
+.archive-lead {
+  font-size: 13px;
+  line-height: 1.78;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.archive-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 19px;
+}
+
+.archive-block h3 {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 1.2px;
+  color: var(--muted);
+  margin: 0 0 9px;
+}
+
+.archive-block p {
+  font-size: 12.5px;
+  line-height: 1.95;
+  margin: 0 0 9px;
+  overflow-wrap: anywhere;
+}
+
+.archive-block p:last-child {
+  margin-bottom: 0;
+}
+
+.archive-block .text-button {
+  font-size: 10px;
+}
+
+.archive-origin {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.archive-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 15px 18px;
+  margin: 0;
+  padding: 17px 0 0;
+  border-top: 1px dashed var(--line);
+}
+
+.archive-facts dt {
+  font-size: 7px;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin-bottom: 5px;
+}
+
+.archive-facts dd {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.archive-sources {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.archive-sources > small {
+  font-size: 7px;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+}
+
+.archive-sources ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+}
+
+.archive-sources li {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 10px;
+}
+
+.archive-sources a {
+  border-bottom: 1px solid var(--line);
+}
+
+.archive-sources small {
+  font-size: 9px;
+  color: var(--muted);
+}
+
+/* The empty state has to be actionable, not apologetic. */
+.archive-hint {
+  font-size: 10px;
+  line-height: 1.85;
+  color: var(--muted);
+  margin: 0;
+  padding-left: 11px;
+  border-left: 1px solid var(--line);
+}
+
+/* Narrow layouts read the archive as a single column, like the facts table. */
+@media (max-width: 860px) {
+  .archive-facts {
+    grid-template-columns: 1fr;
+    gap: 13px;
+  }
+}

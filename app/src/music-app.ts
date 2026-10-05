@@ -9,6 +9,8 @@ import "./music-navigation-ruler.css";
 import "./music-transport-title.css";
 import "./music-theme.css";
 import "./music-theme-switch.css";
+import "./music-archive.css";
+import "./music-lyrics-switch.css";
 import { DocumentDecryption } from "./document-decryption";
 import { ContentTransition, SurfaceTransition } from "./ui-transitions";
 import { qualityMarkup, syncQualityUI } from "./quality-settings";
@@ -54,6 +56,19 @@ import { MusicPresentation, type AlbumSelection } from "./music-presentation";
 import { MusicTrackFocus } from "./music-track-focus";
 import { MusicBoot } from "./music-boot";
 import { viewportLayout } from "./viewport-layout";
+import {
+  albumArchiveMarkup,
+  resolveAlbumArchive,
+  type AlbumArchiveContext,
+} from "./music-archive";
+import {
+  EMPTY_LYRICS,
+  parseLyricsPayload,
+  type LyricsDocument,
+  type LyricsPayload,
+} from "./music-lyrics";
+import { LyricsPane, type LyricsPaneTrack } from "./music-lyrics-pane";
+import { DetailSwitch } from "./music-detail-switch";
 
 type Theme = "day" | "night";
 type Panel = "library" | "search" | "settings" | null;
@@ -283,7 +298,7 @@ stage.innerHTML = `
   <section id="music-detail" class="music-detail" aria-label="专辑详情" hidden>
     <button class="music-back" data-action="back">← 返回专辑架 <kbd>ESC</kbd></button>
     <div class="card-caption"><span id="detail-card-id"></span><small>拖动卡片，查看完整封面</small></div>
-    <article id="album-detail-content" tabindex="-1"></article>
+    <div id="detail-surface" class="detail-surface"><article id="album-detail-content" tabindex="-1"></article></div>
   </section>
   <div id="music-empty" class="music-empty" hidden><small>YOUR PRIVATE COLLECTION</small><h1>让音乐进入这座档案馆。</h1><p>选择本地音乐文件夹，专辑封面会出现在每一张卡片上。</p><button data-action="library">设置音乐文件夹 ↗</button><button data-action="demo" class="subtle">先查看演示封面</button></div>
   <div class="music-bottomline"><span>LOCAL COLLECTION <i>·</i> <span id="library-count">0 ALBUMS</span></span><span id="runtime-info">THREE.JS / LOCAL</span></div>
@@ -365,7 +380,7 @@ function cover(a: MusicAlbum, className = "") {
     : `<span class="cover-placeholder">♪</span>`;
 }
 const documentDecryption = new DocumentDecryption(
-  "h1, .detail-artist, .album-facts span, .track-name strong, .album-about p",
+  "h1, .detail-artist, .album-facts span, .track-name strong, .album-about p, .archive-lead, .archive-block p, .archive-facts dd",
   0.35,
 );
 const tabTransition = new ContentTransition();
@@ -387,6 +402,54 @@ const browseTransition = new SurfaceTransition(
   "cubic-bezier(0.45, 0, 0.25, 1)",
   [$(".music-browse-veil"), $(".album-callout"), $(".music-navigation"), $(".music-keyhint")],
 );
+
+/**
+ * Lyrics and the detail/lyrics switch.
+ *
+ * The pane is created empty on purpose: opening an album adds no lyric DOM, no
+ * parse and no listener. The first `pointerdown` on the bar is what fetches,
+ * parses and mounts a document, so browsing stays exactly as cheap as it was
+ * before this feature existed.
+ */
+const lyricsPane = new LyricsPane($("#music-detail"), {
+  load: loadLyrics,
+  current: () => lyricTarget(currentAlbum()),
+  onError: () => notify("无法读取这首歌的歌词，可稍后重试。"),
+});
+const detailSwitch = new DetailSwitch({
+  host: $("#music-detail"),
+  surface: $("#detail-surface"),
+  pane: lyricsPane,
+  onWarmUp: () => void lyricsPane.prepare(),
+  blocked: () => !!panel || !!boot?.active,
+});
+detailSwitch.setReduced(preferences.reduced);
+lyricsPane.setReduced(preferences.reduced);
+
+/** The track whose lyrics the pane shows: whatever plays, else the first. */
+function lyricTarget(album: MusicAlbum | undefined): LyricsPaneTrack | undefined {
+  if (!album?.tracks.length) return undefined;
+  const playing = playerState?.currentTrack;
+  const track = (playing && playing.albumId === album.id
+    ? album.tracks.find((item) => item.id === playing.id)
+    : undefined) ?? album.tracks[0];
+  return track
+    ? { trackId: track.id, title: track.title, artist: track.artist }
+    : undefined;
+}
+
+async function loadLyrics(trackId: string): Promise<LyricsDocument> {
+  if (!apiAvailable) return EMPTY_LYRICS;
+  try {
+    return parseLyricsPayload(
+      await request<LyricsPayload>(`/api/lyrics/${encodeURIComponent(trackId)}`),
+    );
+  } catch {
+    // No lyrics is a normal answer, not an error worth interrupting playback
+    // for; the pane explains the sidecar convention instead.
+    return EMPTY_LYRICS;
+  }
+}
 let detailIdentity = "",
   pendingDetailFocus = false;
 const trackFocus = new MusicTrackFocus();
@@ -453,6 +516,9 @@ const presentation = new MusicPresentation({
   mode: (next) => {
     mode = next;
     stage.dataset.mode = next;
+    // Returning to the shelf closes the lyrics surface without animating, so
+    // the next album opens on its own details rather than someone else's words.
+    if (next === "archive") detailSwitch.reset();
     syncSelectionMotion();
   },
   prepareMenu: () => {
@@ -468,6 +534,8 @@ const presentation = new MusicPresentation({
   showMenu: () => {
     const detail = $("#music-detail"), content = $("#album-detail-content");
     detailTransition.show(preferences.reduced);
+    // The page is measurable from here on; the bar's dock depends on its height.
+    detailSwitch.syncAlbum();
     detail.inert = !!panel;
     detail.setAttribute("aria-hidden", "false");
     content.inert = false;
@@ -544,6 +612,8 @@ function fit() {
   if (mode === "detail") {
     syncTabIndicator(false);
     documentDecryption.refresh();
+    // The bar's travel is measured from the detail page's own height.
+    detailSwitch.syncAlbum();
   }
 }
 window.addEventListener("resize", fit);
@@ -913,6 +983,7 @@ function renderDetail() {
   article.innerHTML = `<div class="detail-overline"><span>ALBUM ${String(selected + 1).padStart(3, "0")}</span><div class="detail-album-navigation" role="group" aria-label="切换专辑"><button data-action="prev" aria-label="上一张专辑">↑ 上一张</button><button data-action="next" aria-label="下一张专辑">下一张 ↓</button></div></div>
     <h1 title="${esc(a.title)}">${albumTitleMarkup(a.title)}</h1><p class="detail-artist">${esc(a.artist)}${a.offline ? '<span class="offline-badge">目录离线</span>' : ""}</p>
     <div class="album-facts">${fields.map(([name, value]) => `<div><small>${name}</small><span>${esc(String(value))}</span></div>`).join("")}</div>
+    ${albumArchiveMarkup(resolveAlbumArchive(a, archiveContextFor(a)), esc)}
     <div class="music-tabs" role="tablist" aria-label="专辑信息"><button role="tab" id="tab-tracks" data-tab="tracks" tabindex="${activeTab === "tracks" ? 0 : -1}" aria-selected="${activeTab === "tracks"}" aria-controls="album-tab-content"><span>01</span> 歌单</button><button role="tab" id="tab-about" data-tab="about" tabindex="${activeTab === "about" ? 0 : -1}" aria-selected="${activeTab === "about"}" aria-controls="album-tab-content"><span>02</span> 专辑介绍</button><i class="music-tab-indicator" aria-hidden="true"></i></div>
     <div id="album-tab-content" role="tabpanel" aria-labelledby="tab-${activeTab}">${activeTab === "tracks" ? trackList(a, discs) : albumAbout(a)}</div>`;
   article.scrollTop = scroll;
@@ -922,6 +993,23 @@ function renderDetail() {
     preferences.reduced || scene?.decryptionFrame.phase === "clear",
   );
   updatePlayingRows();
+  // The pane belongs to one album; stepping albums releases its document
+  // rather than leaving another album's lyrics mounted behind the detail.
+  lyricsPane.setTrack(lyricTarget(a));
+  detailSwitch.syncAlbum();
+}
+/** Shelf position of an album, used by the archive panel's derived facts. */
+function archiveContextFor(a: MusicAlbum): AlbumArchiveContext {
+  const ordinal = records.findIndex((record) => record.id === a.id);
+  if (ordinal < 0) return {};
+  const location = fileLocation(ordinal);
+  return {
+    ordinal: ordinal + 1,
+    libraryCount: records.length,
+    column: archiveColumns[location.lane],
+    columnIndex: location.lane + 1,
+    columnCount: archiveColumns.length,
+  };
 }
 function trackList(a: MusicAlbum, discs: number) {
   if (!a.tracks.length)
@@ -1105,6 +1193,17 @@ player.subscribe((state) => {
     : "播放当前专辑";
   if (state.error && state.error !== lastPlayerError) notify(state.error);
   lastPlayerError = state.error || "";
+  // Lyrics follow playback when the open album owns the playing track; this is
+  // a no-op comparison on every other update.
+  const playing = state.currentTrack;
+  const album = currentAlbum();
+  if (playing && album && playing.albumId === album.id && playing.id !== lyricsPane.trackId)
+    lyricsPane.setTrack(lyricTarget(album));
+  // The lyrics pane reuses this stream instead of starting a second timer; the
+  // clock only advances for the track the pane is actually showing.
+  lyricsPane.setClock(
+    playing && playing.id === lyricsPane.trackId ? state.currentTime : 0,
+  );
   updatePlayingRows();
 });
 
@@ -1667,6 +1766,8 @@ document.addEventListener("change", (e) => {
   if (el.id === "reduced-motion") {
     preferences.reduced = el.checked;
     transportTitleMotion.setReduced(el.checked);
+    detailSwitch.setReduced(el.checked);
+    lyricsPane.setReduced(el.checked);
     if (el.checked) {
       browseTransition.finish();
       detailTransition.finish();
@@ -1995,6 +2096,16 @@ Object.assign(window, {
       return player.state;
     },
     stats: () => scene?.getStats(),
+    /** Live state of the detail/lyrics switch, for on-device verification. */
+    get detailSwitch() {
+      return {
+        state: detailSwitch.open ? "lyrics" : "detail",
+        progress: Number(detailSwitch.dragProgress.toFixed(3)),
+        locked: detailSwitch.locked,
+        lyricsTrack: lyricsPane.trackId,
+        lyricsPrepared: lyricsPane.prepared,
+      };
+    },
     get presentation() {
       return { phase: presentation.phase, cameraPhase: scene?.musicPresentationPhase,
         pendingIndex: presentation.pendingSelection?.index,

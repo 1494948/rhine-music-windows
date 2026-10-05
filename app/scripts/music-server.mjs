@@ -3,6 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promises as fs, createReadStream } from 'node:fs'
 import { MusicLibraryStore, safeRootList } from './music-library.mjs'
+import { readLyrics } from './lyrics.mjs'
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' }
@@ -142,6 +143,14 @@ export async function createMusicServer({
         const file = audio ? store.trackFile(audio[1]) : store.artworkFile(artwork[1])
         if (!file) return json(response, 404, { error: '索引中没有此文件' })
         return await serveFile(request, response, file, { cache: artwork ? 'private, max-age=3600' : 'private, no-cache' })
+      }
+      // Lyrics are read lazily: the index JSON stays small, and the pane is only
+      // built after the user has actually asked for the lyrics view.
+      const lyrics = /^\/api\/lyrics\/([a-zA-Z0-9-]+)$/.exec(route)
+      if (lyrics && get) {
+        const file = store.trackFile(lyrics[1])
+        if (!file) return json(response, 404, { error: '索引中没有此文件' })
+        return json(response, 200, await readLyrics(file))
       }
       if (route === '/api/foobar/status' && get) return json(response, 200, { configured: !!store.config.foobarBaseUrl, baseUrl: store.config.foobarBaseUrl, connected: false, note: 'configured 仅代表已保存地址；连接状态需读取 /api/foobar/player 实际响应。' })
       if (route.startsWith('/api/foobar/')) {
