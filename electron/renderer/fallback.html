@@ -14,11 +14,13 @@
   }
   * { box-sizing: border-box; }
   body {
-    margin: 0; min-height: 100vh; display: grid; place-items: center;
+    margin: 0; min-height: 100vh; display: grid; place-items: start center;
     background: var(--bg); color: var(--ink);
     font: 15px/1.65 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    /* 诊断信息可能很长（spawn 环境 + 日志尾部），短屏必须能滚动查看 */
+    overflow-y: auto;
   }
-  .card { max-width: 640px; padding: 40px; }
+  .card { max-width: 680px; padding: 40px; }
   h1 { font-size: 21px; font-weight: 600; margin: 0 0 14px; }
   p { color: var(--muted); margin: 0 0 10px; }
   h2 { font-size: 14px; font-weight: 600; margin: 22px 0 8px; color: var(--ink); }
@@ -27,7 +29,11 @@
     background: #17171d; border-left: 3px solid var(--accent);
     font-size: 13px; line-height: 1.6;
   }
-  .box.err { color: #ffb4b4; white-space: pre-wrap; word-break: break-word; }
+  .box.err {
+    color: #ffb4b4; white-space: pre-wrap; word-break: break-word;
+    max-height: 46vh; overflow-y: auto; user-select: text;
+    font-family: Consolas, "Cascadia Mono", monospace; font-size: 12px;
+  }
   code {
     display: block; padding: 8px 10px; border-radius: 8px;
     background: #1e1e25; font-size: 12px; color: var(--ink);

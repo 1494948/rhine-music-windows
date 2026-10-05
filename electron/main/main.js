@@ -242,14 +242,15 @@ async function loadApp(win) {
   const useDev = !serviceUrl && process.env.RHINE_DEV === '1'
   const target = serviceUrl || (useDev ? DEV_SERVER_URL : null)
   if (!target) {
-    await loadFallback(win)
+    // 绝不能不给原因：降级页显示「（主进程未提供错误信息）」等于让用户干瞪眼
+    await loadFallback(win, new Error('音乐库服务未初始化（service 实例不存在），无法得到访问地址'))
     return
   }
   try {
     await win.loadURL(target)
   } catch (error) {
     console.error('[window] 加载失败:', error.message)
-    await loadFallback(win)
+    await loadFallback(win, error)
   }
 }
 
@@ -271,7 +272,13 @@ async function loadWithRetry(win, url, attempts = 10) {
     }
   }
   console.error('[window] 重试加载失败:', lastError?.message)
-  await loadFallback(win)
+  // 这里就是「错误详情：主进程未提供错误信息」的来源：
+  // 旧代码既不给 loadFallback 传 lastError，也不向上抛，
+  // 于是 startServiceAndLoad 里那个带 error 的 catch 永远不会执行。
+  await loadFallback(
+    win,
+    lastError ?? new Error(`重试 ${attempts} 次后仍无法加载 ${url}`),
+  )
   return false
 }
 
@@ -294,15 +301,41 @@ async function loadFallback(win, error) {
   }
   // 把真实错误注入页面。只在日志里打印是不够的 ——
   // 用户看到的是「服务未能启动」，却不知道具体原因，只能干等。
+  // 总是注入完整上下文。远程机型（不同硬件/系统/杀软环境）排障时，
+  // 用户能提供的就是这一屏文字——只报「未就绪」等于无法定位。
+  const parts = []
   if (error) {
-    const detail = `${error.code ? `[${error.code}] ` : ''}${error.message}`
-    try {
-      await win.webContents.executeJavaScript(
-        `window.__RHINE_SERVICE_ERROR__ = ${JSON.stringify(detail)}; true`,
-        true,
-      )
-    } catch { /* 注入失败不影响降级页本身显示 */ }
+    parts.push(`[${error.code ?? 'NO_CODE'}] ${error.message}`)
+  } else {
+    parts.push('主进程未捕获到错误对象')
   }
+  if (service?.lastError) parts.push(`服务最近错误：${service.lastError}`)
+  if (service?.spawnDiagnostics) {
+    parts.push(`spawn 环境：${JSON.stringify(service.spawnDiagnostics, null, 1)}`)
+  }
+  if (service?.readLogTail) {
+    try {
+      const tail = await service.readLogTail(20)
+      if (tail) parts.push(`服务日志尾部：\n${tail}`)
+    } catch { /* 读日志失败不影响降级页 */ }
+  }
+  // 直接把文本写进页面元素，而不是只设一个全局变量。
+  // 旧实现只赋值 window.__RHINE_SERVICE_ERROR__，但注入发生在 loadURL 完成
+  // **之后**，而 fallback.html 的脚本在页面加载时就已经读完了那个变量——
+  // 变量永远晚一步，用户看到的永远是占位文案「（主进程未提供错误信息）」。
+  // 这是注入机制的时序缺陷，与上层有没有传 error 无关。
+  const detail = parts.join('\n\n')
+  try {
+    await win.webContents.executeJavaScript(
+      `window.__RHINE_SERVICE_ERROR__ = ${JSON.stringify(detail)};
+       (function () {
+         var el = document.getElementById('err');
+         if (el) { el.textContent = window.__RHINE_SERVICE_ERROR__; el.dataset.filled = '1'; }
+         return true;
+       })();`,
+      true,
+    )
+  } catch { /* 注入失败不影响降级页本身显示 */ }
 }
 
 // ─────────────────────────── 托盘 ───────────────────────────

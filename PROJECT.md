@@ -143,7 +143,18 @@ npm run build:portable # 仅产出便携版
     测试时先 `taskkill node.exe` 再跑，避免旧实例数据干扰判断
 23. **`??` 与 `/` 的优先级**：`a ?? 0/1024` 实际是 `a ?? 0`（`/` 优先级更高），
     字节数被直接当 MB 显示。写单位换算必须加括号
-24. **开场动画（MusicBoot）期间 loadLibrary 会推迟**：截图/自动化环境无交互、
+24. **★ 降级页注入的时序陷阱**（2026-10-05）：`loadURL` 完成后才给
+    `window.__RHINE_SERVICE_ERROR__` 赋值，而页面脚本在加载时已读完该变量
+    ——变量永远晚一步。**注入必须直接写 DOM**，不能只设全局变量。
+    另外 `loadWithRetry` 耗尽重试后既不给 loadFallback 传 error、
+    又返回 false 不抛错，会让带 error 的 catch 永不执行
+25. **端口归属探测（probePort().ours）依赖外部命令查命令行**：系统命令受限
+    或未装 wmic 时恒为 false，**不能**用作「服务是否就绪」的判据；
+    就绪判定用 TCP connect，归属判定只用于启动前复用检查
+26. **强杀主进程会留下孤儿服务进程**（`Rhine Music.exe` 以 Node 模式运行），
+    它继续占用 5178，导致下次启动被误判为端口占用。测试前先
+    `taskkill //IM "Rhine Music.exe" //F` 再跑，否则自检会失败
+27. **开场动画（MusicBoot）期间 loadLibrary 会推迟**：截图/自动化环境无交互、
     动画不结束 → 数据永不加载。shot 模式需自动点 `.music-boot-skip`
 
 ## 7. 变更记录

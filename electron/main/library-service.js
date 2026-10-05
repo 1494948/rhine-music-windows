@@ -48,6 +48,18 @@ class LibraryService {
     /** @type {import('node:child_process').ChildProcess|null} */
     this.child = null
     this.portReady = false
+    /**
+     * 最近一次启动失败的原因（spawn 错误 / 进程退出码 / 就绪超时）。
+     * 供主进程在降级页展示——「服务未就绪」却不说明原因，用户无从排查。
+     * @type {string|null}
+     */
+    this.lastError = null
+    /**
+     * spawn 时刻的环境快照（execPath/脚本路径/是否存在/工作目录/运行时判定）。
+     * 远程机型排障时这组信息基本能定位到具体差异。
+     * @type {object|null}
+     */
+    this.spawnDiagnostics = null
   }
 
   get baseUrl() {
@@ -74,9 +86,35 @@ class LibraryService {
       throw err
     }
 
+    this.lastError = null
     await this.#spawnService()
-    this.portReady = true
-    return { reused: false, port: this.port }
+
+    // 不能 spawn 完就宣布就绪：必须等到「端口上确实是我们的服务」。
+    // 他机实测：服务进程可能在启动瞬间被拦杀（杀软/策略），
+    // 此时主进程若无脑置 portReady=true，只会得到一个没有原因的降级页。
+    // 判据用「本进程能否真的连上」（#probe 的 TCP connect），而不是
+    // probePort().ours —— 后者需要查询外部进程的命令行来确认端口归属，
+    // 而本机系统命令受限、新版 Windows 又移除了 wmic，
+    // 命令行取不到时 ours 恒为 false，会把「服务其实正常」误判成启动失败。
+    // 端口归属只在「启动前判断是否复用已有服务」时用，就绪判定用连通性更可靠。
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      if (this.lastError) break
+      if (this.child && this.child.exitCode !== null) break
+      if (await this.#probe()) {
+        this.portReady = true
+        return { reused: false, port: this.port }
+      }
+      await new Promise((r) => setTimeout(r, 500))
+    }
+
+    this.portReady = false
+    const tail = await this.readLogTail(20)
+    const err = new Error(
+      `音乐库服务启动失败：${this.lastError ?? '端口未进入监听'}\n` +
+        `日志：${this.logPath}\n${tail}`,
+    )
+    err.code = 'SERVICE_START_FAILED'
+    throw err
   }
 
   /**
@@ -171,8 +209,9 @@ class LibraryService {
       // 行为取决于 Electron 对「空值环境变量」的处理——非常脆弱。
       const usingElectronRuntime =
         path.resolve(execPath).toLowerCase() === path.resolve(process.execPath).toLowerCase()
-      // 诊断日志：spawn 失败时唯一能定位问题的信息
-      console.log('[service] spawn 诊断', JSON.stringify({
+      // 诊断快照：spawn 失败时唯一能定位问题的信息。
+      // 存进实例供降级页展示——打包版用户看不到主进程 console。
+      this.spawnDiagnostics = {
         execPath,
         script,
         scriptExists: fsSync.existsSync(script),
@@ -181,7 +220,11 @@ class LibraryService {
         projectDir: this.projectDir,
         projectDirExists: fsSync.existsSync(this.projectDir),
         usingElectronRuntime,
-      }))
+        electron: process.versions.electron,
+        node: process.versions.node,
+        platform: process.platform,
+      }
+      console.log('[service] spawn 诊断', JSON.stringify(this.spawnDiagnostics))
       this.child = spawn(execPath, [script, '--port', String(this.port)], {
         // cwd 必须是磁盘上真实存在的目录。
         // 打包后 this.projectDir 是 `.../resources/app.asar` —— 那是虚拟路径，
@@ -200,14 +243,22 @@ class LibraryService {
         windowsHide: true,
       })
       this.child.once('error', (error) => {
-        console.error('[service] 启动失败:', error.message)
         this.portReady = false
+        this.lastError = `spawn 失败: ${error.message}（code=${error.code ?? '-'}，execPath=${execPath}）`
+        console.error('[service] 启动失败:', this.lastError)
+        // 必须落盘：用户能拿到的只有日志文件
+        void fs
+          .appendFile(this.logPath, `[${new Date().toISOString()}] ${this.lastError}\n`)
+          .catch(() => {})
       })
       this.child.once('exit', (code, signal) => {
         this.portReady = false
-        if (code !== 0 && !signal) {
-          console.error(`[service] 异常退出，code=${code}，日志：${this.logPath}`)
-        }
+        const note = `服务进程退出 code=${code ?? '-'} signal=${signal ?? '-'}`
+        if (!this.lastError) this.lastError = note
+        console.error(`[service] ${note}，日志：${this.logPath}`)
+        void fs
+          .appendFile(this.logPath, `[${new Date().toISOString()}] ${note}\n`)
+          .catch(() => {})
       })
     } finally {
       await log.close()
@@ -220,10 +271,9 @@ class LibraryService {
       if (await this.#probe()) return
       await new Promise((r) => setTimeout(r, 250))
     }
-    const tail = await this.readLogTail(16)
-    const err = new Error(`音乐库服务未能在 30 秒内就绪。\n日志：${this.logPath}\n${tail}`)
-    err.code = 'SERVICE_TIMEOUT'
-    throw err
+    // 就绪失败不在此处抛出：统一由 ensure() 汇总 lastError 后抛出，
+    // 保证「服务起不来」永远只有一个带完整上下文的错误出口。
+    if (!this.lastError) this.lastError = '服务进程存活但端口始终未进入监听'
   }
 
   async #probe() {
