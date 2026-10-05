@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { setMusicAlbums, records, archiveColumns, columnFiles, fileAtSlot, fileLocation } from '../src/data.ts';
-import { fileAtCell, selectionCell, visibleCell, cellKey, LOOP_COLUMNS, LOOP_ROWS, wrap } from '../src/archive-loop.ts';
+import { fileAtCell, poolAlbumCapacity, selectionCell, visibleCell, cellKey, LOOP_COLUMNS, LOOP_ROWS, MUSIC_LOOP_ROWS, wrap } from '../src/archive-loop.ts';
 import { containCover } from '../src/cover-atlas.ts';
 
 for (const genreCount of [1, 2, 7]) for (const albumCount of [1, 3, 40]) {
@@ -29,6 +29,28 @@ for (const genreCount of [1, 2, 7]) for (const albumCount of [1, 3, 40]) {
     const cells = Array.from({ length: LOOP_COLUMNS * LOOP_ROWS }, (_, i) => visibleCell(i, center));
     assert.equal(new Set(cells.map(cellKey)).size, LOOP_COLUMNS * LOOP_ROWS);
     assert.ok(cells.every((cell) => Number.isFinite(cell.row) && records[fileAtCell(cell)]));
+  }
+  // The cover atlas pool is sized to poolAlbumCapacity(), not to the slot count.
+  // If that bound ever under-counts, an album cannot obtain a tile and its card
+  // renders empty, so the bound is asserted against every camera position the
+  // shelf can pass through: whichever albums are referenced simultaneously must
+  // never outnumber the tiles the atlas will allocate.
+  for (const rows of [LOOP_ROWS, MUSIC_LOOP_ROWS]) {
+    const capacity = poolAlbumCapacity(rows);
+    assert.ok(capacity <= LOOP_COLUMNS * rows, 'capacity never exceeds the slot count');
+    assert.ok(capacity <= records.length, 'capacity never exceeds the library');
+    for (let step = 0; step < 240; step++) {
+      const center = { lane: step * 0.37 - 40, row: step * 1.13 - 60 };
+      const live = new Set();
+      for (let i = 0; i < LOOP_COLUMNS * rows; i++) {
+        const file = fileAtCell(visibleCell(i, center, rows));
+        if (file >= 0) live.add(file);
+      }
+      assert.ok(
+        live.size <= capacity,
+        `simultaneously referenced albums (${live.size}) must fit the atlas (${capacity})`,
+      );
+    }
   }
 }
 setMusicAlbums([], []);

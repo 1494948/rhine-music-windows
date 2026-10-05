@@ -81,6 +81,28 @@ export function cellKey(cell: ArchiveCell) {
   return `${cell.lane}:${cell.row}`;
 }
 
+/**
+ * Upper bound on the number of distinct albums the display pool can reference.
+ *
+ * A slot resolves its album through fileAtCell, which indexes one column's file
+ * list by row, so a pool lane can only ever show min(rows, files.length)
+ * distinct albums; lanes that wrap to the same column share that set. Sizing the
+ * cover atlas to this bound instead of to the slot count keeps the atlas surface
+ * proportional to the library rather than to the pool: a 79-album library needs
+ * 79 tiles, not the 432 slots' worth (108 MB of texture per upload).
+ */
+export function poolAlbumCapacity(rows = LOOP_ROWS) {
+  const columns = new Set<number>();
+  for (const lane of POOL_LANES) {
+    columns.add(wrap(lane, archiveColumns.length));
+  }
+  let total = 0;
+  for (const column of columns) {
+    total += Math.min(rows, columnFiles(column).length);
+  }
+  return total;
+}
+
 export function sameCell(a: ArchiveCell, b: ArchiveCell) {
   return a.lane === b.lane && a.row === b.row;
 }

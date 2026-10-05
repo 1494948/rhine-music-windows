@@ -2,11 +2,17 @@ import * as THREE from "three";
 import type { MusicSelectionLighting } from "./music-lighting";
 import type { ArchiveRecord } from "./data";
 import { MUSIC_COVER, createAlbumPrintMaterial } from "./music-model.ts";
+import { poolAlbumCapacity, LOOP_ROWS } from "./archive-loop.ts";
 
 // Print on the glass surface. No transmitting/frosted layer sits over the image.
 export const COVER_SIZE = MUSIC_COVER;
-type CoverImage = { source: HTMLCanvasElement; width: number; height: number };
+type CoverImage = { source: HTMLCanvasElement | ImageBitmap; width: number; height: number };
 const COVER_PAINT_SIZE = 1024;
+// Thumbnails are retained, never the decoded multi-megapixel source art.
+const MAX_THUMBNAIL = 1024;
+// Hold the pool's albums so navigating back and forth never re-decodes a cover a
+// lane switch has already paid for; bounded so thumbnail memory stays finite.
+const IMAGE_CACHE_LIMIT = 96;
 // Use the same UV margin at every texture resolution. A fixed two-pixel inset
 // made the 256px atlas artwork smaller than its 1024px lifted/returning copy.
 export const COVER_INSET = 1 / 128;
@@ -94,9 +100,12 @@ export class CoverAtlas {
   private readonly atlasCanvas = document.createElement("canvas");
   private readonly selectedCanvas = document.createElement("canvas");
   private readonly tileCanvas = document.createElement("canvas");
-  private readonly atlas: THREE.CanvasTexture;
+  private atlas: THREE.CanvasTexture;
   private readonly selectedTexture: THREE.CanvasTexture;
   private readonly images = new Map<string, Promise<CoverImage | undefined>>();
+  // Mirror of images' resolved values: a tile that already owns its artwork can
+  // paint once instead of flashing the placeholder and repainting on arrival.
+  private readonly resolved = new Map<string, CoverImage>();
   private readonly slotKeys: (string | undefined)[];
   // Tiles are keyed by album, not by pool slot. The pool shows one album in many
   // positions, and a slot-keyed atlas had to repaint and re-upload most of its
@@ -105,23 +114,40 @@ export class CoverAtlas {
   // distinct album means scrolling changes only which tile an instance points at,
   // so the upload stops happening during navigation entirely.
   private readonly tileOf = new Map<string, number>();
-  private readonly tileKeys: (string | undefined)[];
-  private readonly tileRefs: Int32Array;
+  private tileKeys: (string | undefined)[];
+  private tileRefs: Int32Array;
   private readonly slotTile: Int32Array;
   private readonly freeTiles: number[] = [];
   private readonly tileAttribute: THREE.InstancedBufferAttribute;
-  private readonly tileCount: number;
+  private tileCount: number;
   private readonly recordKeys = new WeakMap<ArchiveRecord, string>();
   private selectedRecord?: ArchiveRecord;
   private generation = 0;
   private disposed = false;
   private readonly columns = 16;
-  private readonly rows: number;
+  private rows: number;
   private readonly tileWidth: number;
   private readonly tileHeight: number;
+  // Slot count (the display pool) and the rows each lane spans, kept apart from
+  // the tile count so the atlas can be sized to the albums actually reachable.
+  private readonly slotCount: number;
+  private readonly poolRows: number;
+  private readonly atlasAnisotropy: number;
 
-  constructor(count: number, maxTextureSize: number, anisotropy: number, lighting?: MusicSelectionLighting) {
-    this.rows = Math.ceil(count / this.columns);
+  constructor(
+    count: number,
+    maxTextureSize: number,
+    anisotropy: number,
+    lighting?: MusicSelectionLighting,
+    poolRows: number = LOOP_ROWS,
+  ) {
+    this.slotCount = count;
+    this.poolRows = poolRows;
+    // Capacity, not slot count: a library of 79 albums needs 79 tiles however
+    // many slots the pool has, and every spare tile is atlas surface re-uploaded
+    // on each repaint.
+    this.tileCount = Math.max(1, Math.min(count, poolAlbumCapacity(poolRows)));
+    this.rows = Math.ceil(this.tileCount / this.columns);
     this.tileWidth = Math.min(
       256,
       Math.floor(maxTextureSize / this.columns),
@@ -135,17 +161,12 @@ export class CoverAtlas {
     this.selectedCanvas.width = COVER_PAINT_SIZE;
     this.selectedCanvas.height = COVER_PAINT_SIZE;
     this.slotKeys = Array(count);
-    this.tileCount = count;
-    this.tileKeys = Array(count);
-    this.tileRefs = new Int32Array(count);
+    this.tileKeys = Array(this.tileCount);
+    this.tileRefs = new Int32Array(this.tileCount);
     this.slotTile = new Int32Array(count).fill(-1);
-    for (let i = count - 1; i >= 0; i--) this.freeTiles.push(i);
-    this.atlas = new THREE.CanvasTexture(this.atlasCanvas);
-    this.atlas.colorSpace = THREE.SRGBColorSpace;
-    // No whole-atlas mip pyramid: independent transparent tile margins prevent bleed.
-    this.atlas.generateMipmaps = false;
-    this.atlas.minFilter = THREE.LinearFilter;
-    this.atlas.anisotropy = Math.min(4, anisotropy);
+    for (let i = this.tileCount - 1; i >= 0; i--) this.freeTiles.push(i);
+    this.atlasAnisotropy = Math.min(4, anisotropy);
+    this.atlas = this.createAtlasTexture();
     this.selectedTexture = new THREE.CanvasTexture(this.selectedCanvas);
     this.selectedTexture.colorSpace = THREE.SRGBColorSpace;
     this.selectedTexture.anisotropy = Math.min(8, anisotropy);
@@ -205,35 +226,109 @@ export class CoverAtlas {
     this.selected.receiveShadow = true;
   }
 
+  private createAtlasTexture() {
+    const texture = new THREE.CanvasTexture(this.atlasCanvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    // No whole-atlas mip pyramid: independent transparent tile margins prevent bleed.
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    texture.anisotropy = this.atlasAnisotropy;
+    return texture;
+  }
+
+  /**
+   * Grow the tile pool to the albums the current library can reference.
+   *
+   * Only growing: a library refresh that swaps in a bigger library must be able
+   * to obtain a tile for every album it can show, while shrinking would throw
+   * away surface the atlas may still be asked for. Called from reset(), where no
+   * live tile exists to preserve.
+   */
+  private sizeTo(capacity: number) {
+    const next = Math.max(1, Math.min(this.slotCount, capacity));
+    if (next <= this.tileCount) return;
+    this.tileCount = next;
+    this.rows = Math.ceil(next / this.columns);
+    this.atlasCanvas.width = this.columns * this.tileWidth;
+    this.atlasCanvas.height = this.rows * this.tileHeight;
+    this.tileKeys = Array(next);
+    this.tileRefs = new Int32Array(next);
+    this.atlas.dispose();
+    this.atlas = this.createAtlasTexture();
+    const material = this.array.material as THREE.MeshLambertMaterial;
+    material.map = this.atlas;
+    material.needsUpdate = true;
+  }
+
   private loadImage(url?: string) {
     if (!url) return Promise.resolve(undefined);
     let pending = this.images.get(url);
     if (!pending) {
-      const image = new Image();
-      image.crossOrigin = "anonymous";
-      image.src = url;
-      pending = image
-        .decode()
-        .then(() => {
-          // Retain bounded thumbnails, not decoded multi-megapixel source art.
-          const width = image.naturalWidth,
-            height = image.naturalHeight;
-          const scale = Math.min(1, 1024 / Math.max(width, height));
-          const source = document.createElement("canvas");
-          source.width = Math.max(1, Math.round(width * scale));
-          source.height = Math.max(1, Math.round(height * scale));
-          source
-            .getContext("2d")!
-            .drawImage(image, 0, 0, source.width, source.height);
-          image.src = "";
-          return { source, width, height };
-        })
-        .catch(() => undefined);
+      pending = this.decodeThumbnail(url).then((image) => {
+        if (image) this.resolved.set(url, image);
+        return image;
+      });
       this.images.set(url, pending);
-      if (this.images.size > 48)
+      if (this.images.size > IMAGE_CACHE_LIMIT)
         this.images.delete(this.images.keys().next().value!);
     }
     return pending;
+  }
+
+  /**
+   * Decode and downscale off the main thread.
+   *
+   * Scaling a multi-megapixel cover down to a thumbnail inside drawImage() blocks
+   * the main thread for milliseconds per cover; a lane switch asks for a whole
+   * column of new covers at once, so that work landed as one burst exactly when
+   * the camera started moving. createImageBitmap does the resize on a worker
+   * thread, leaving the main thread only the small tile paint. The <img> path
+   * remains as a fallback for sources fetch() cannot read.
+   */
+  private async decodeThumbnail(url: string): Promise<CoverImage | undefined> {
+    try {
+      const response = await fetch(url, { credentials: "omit" });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const blob = await response.blob();
+      const bitmap = await createImageBitmap(blob);
+      const width = bitmap.width,
+        height = bitmap.height;
+      const scale = Math.min(1, MAX_THUMBNAIL / Math.max(width, height));
+      if (scale >= 1) return { source: bitmap, width, height };
+      const resized = await createImageBitmap(blob, {
+        resizeWidth: Math.max(1, Math.round(width * scale)),
+        resizeHeight: Math.max(1, Math.round(height * scale)),
+        resizeQuality: "high",
+      });
+      bitmap.close();
+      return { source: resized, width, height };
+    } catch {
+      return this.decodeThumbnailWithImageElement(url);
+    }
+  }
+
+  /** Fallback for cover sources that fetch() cannot read (e.g. cross-origin). */
+  private async decodeThumbnailWithImageElement(url: string): Promise<CoverImage | undefined> {
+    try {
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      image.src = url;
+      await image.decode();
+      // Retain bounded thumbnails, not decoded multi-megapixel source art.
+      const width = image.naturalWidth,
+        height = image.naturalHeight;
+      const scale = Math.min(1, MAX_THUMBNAIL / Math.max(width, height));
+      const source = document.createElement("canvas");
+      source.width = Math.max(1, Math.round(width * scale));
+      source.height = Math.max(1, Math.round(height * scale));
+      source
+        .getContext("2d")!
+        .drawImage(image, 0, 0, source.width, source.height);
+      image.src = "";
+      return { source, width, height };
+    } catch {
+      return undefined;
+    }
   }
 
   setSlot(slot: number, record: ArchiveRecord | undefined) {
@@ -246,9 +341,10 @@ export class CoverAtlas {
     }
     if (this.slotKeys[slot] === key) return;
     this.slotKeys[slot] = key;
-    // Release this slot's previous tile before taking a new one. At most `count`
-    // distinct albums can be referenced by `count` slots, so a tile is always
-    // free afterwards and allocation cannot fail.
+    // Release this slot's previous tile before taking a new one. The tile pool is
+    // sized to poolAlbumCapacity(), which bounds the distinct albums the pool can
+    // reference, so a released tile always covers the album arriving next and
+    // allocation cannot fail.
     const previous = this.slotTile[slot];
     if (previous >= 0) {
       this.slotTile[slot] = -1;
@@ -305,8 +401,16 @@ export class CoverAtlas {
       context.drawImage(this.tileCanvas, x, y);
       this.atlas.needsUpdate = true;
     };
+    // A decoded thumbnail paints straight into the tile: one paint, one upload,
+    // and no placeholder frame for artwork the session already holds.
+    const url = record?.album?.coverUrl;
+    const ready = url ? this.resolved.get(url) : undefined;
+    if (ready) {
+      draw(ready);
+      return;
+    }
     draw();
-    void this.loadImage(record?.album?.coverUrl).then(draw);
+    void this.loadImage(url).then(draw);
   }
 
   /** Point one instance at a tile, or make it degenerate when there is none. */
@@ -332,9 +436,16 @@ export class CoverAtlas {
   async select(record: ArchiveRecord | undefined) {
     this.selectedRecord = record;
     const generation = this.generation;
+    const url = record?.album?.coverUrl;
+    const ready = url ? this.resolved.get(url) : undefined;
+    if (ready) {
+      paintCover(this.selectedCanvas, record, ready);
+      this.selectedTexture.needsUpdate = true;
+      return;
+    }
     paintCover(this.selectedCanvas, record);
     this.selectedTexture.needsUpdate = true;
-    const image = await this.loadImage(record?.album?.coverUrl);
+    const image = await this.loadImage(url);
     if (
       this.disposed ||
       generation !== this.generation ||
@@ -367,6 +478,8 @@ export class CoverAtlas {
   }
 
   reset() {
+    // A refreshed library can be larger than the one the atlas was sized for.
+    this.sizeTo(poolAlbumCapacity(this.poolRows));
     this.generation++;
     this.slotKeys.fill(undefined);
     this.tileKeys.fill(undefined);
@@ -379,10 +492,12 @@ export class CoverAtlas {
     this.tileAttribute.needsUpdate = true;
     this.selectedRecord = undefined;
     this.images.clear();
+    this.resolved.clear();
   }
   dispose() {
     this.disposed = true;
     this.images.clear();
+    this.resolved.clear();
     this.atlas.dispose();
     this.selectedTexture.dispose();
     this.array.geometry.dispose();

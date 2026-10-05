@@ -398,7 +398,7 @@ export class ArchiveScene {
       this.instances.push(inst);
       this.scene.add(inst);
     }
-    this.covers = new CoverAtlas(count, this.renderer.capabilities.maxTextureSize, this.renderer.capabilities.getMaxAnisotropy(), this.selectionLighting);
+    this.covers = new CoverAtlas(count, this.renderer.capabilities.maxTextureSize, this.renderer.capabilities.getMaxAnisotropy(), this.selectionLighting, this.poolRows);
     this.scene.add(this.covers.array);
     this.model.add(this.covers.selected);
     if (!musicLibrary) {
