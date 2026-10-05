@@ -8,10 +8,10 @@
 
 ## 2. 状态
 
-**开发中** · 最后更新：2026-10-05
+**开发中** · 最后更新：2026-10-06
 
-- 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）
-- 待办：**需求 A 需真机验证**（GPU 上传与视觉表现无法在无浏览器环境校验）；需求 B 专辑档案 / C 小白条 / D 歌词动效（详见 `docs/改造实现方案.md` 与 `works/兴趣/2026-10-05-Rhine音乐专辑页交互与性能实现方案/实现方案.md`）
+- 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板；需求 C 小白条详情⇄歌词切换；需求 D 歌词解析/接口/动效面板
+- 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需真机验证**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）；需求 C 的 `--switch-top` / `--switch-bottom` 落点、需求 B 的档案补录内容需按实机与真实曲库调整
 
 ## 3. 技术栈与关键依赖
 
@@ -118,8 +118,20 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 - **基线既有缺陷 2 —— `check-music-model.mjs` 断言失败**（`day retains its frosted finish…`）：
   该脚本只导入 `music-model.ts`，与图集/布局改动无关；是二次修改者调了白天主题玻璃粗糙度
   却未同步校验阈值（day 期望 0.42–0.50）。
-- 可运行校验现状（2026-10-06 实测，10 个脚本）：**9 通过 / 1 失败**（失败项即上面第 2 条）。
+- 可运行校验现状（2026-10-06 实测，12 个脚本）：**10 通过 / 2 失败**（失败项即上面两条基线缺陷；
+  新增的 `check-music-lyrics`、`check-music-lyrics-api` 均通过）。
+- **歌词来源约定（需求 D）**：同名 `.lrc` 优先（同上目录、基名一致；`.lrc/.LRC/.zh.lrc/.zh-CN.lrc/.zh_CN.lrc`），
+  否则读内嵌 USLT/SYLT。`.lrc` 用 UTF-8 解不出来时会依次试 `gb18030/gbk/big5`。
+  歌词**不写入曲库索引**（走 `GET /api/lyrics/:trackId` 按需读取 + 文件指纹缓存），
+  所以索引 JSON 体积不受影响，但**重新扫描不会让歌词生效——它本来就是实时读的，改完 `.lrc` 直接生效**。
+- **小白条落点靠 CSS 变量调**：`app/src/music-lyrics-switch.css` 里 `.music-detail` 的
+  `--switch-top: 84px`（静止位）与 `--switch-bottom: 68px`（歌词态距底）。改这两个值即可整体移位，
+  无需动 TS。拖动位移按 320px 映射到全程（`DRAG_TRAVEL`），条形自身滑向另一端补足剩余行程。
+- **档案补录文件是 `app/content/album-archives.json`**（受版本管理）：`albums` 为空时界面自动退回
+  「本地已核对简介」或「本地数据推导」。**不要往里写没有来源的外部事实**——该文件是唯一允许写外部事实的地方，
+  正因为写了就必须署名，`sources` 字段会一并显示。
 - 键盘操作是主要交互：`←/→` 切分类、`↑/↓` 换专辑、`Enter` 打开、`Esc` 返回。
+  小白条聚焦后 `Enter/Space` 切换详情⇄歌词、`↑/↓` 取向、`Home/End` 直达两端（已 `stopPropagation`，不会连带换专辑）。
 - 构建产物 / 依赖体积：`node_modules` ≈112MB、`dist` ≈38MB，均不入库。
 
 ## 6.1 已验证的环境事实（2026-10-05）
@@ -130,7 +142,8 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 | vite（lock 实际解析） | 7.3.6 |
 | esbuild | 0.28.2 |
 | `npx tsc --noEmit` | 通过，退出码 0 |
-| `vite build` | 通过，97 模块，耗时 ≈2.5s |
+| `vite build` | 通过，104 模块（需求 A 时为 97），耗时 ≈2.4–3.5s |
+| 新增检查脚本 | `check-music-lyrics`（解析/档案/服务端读取/样式契约）与 `check-music-lyrics-api`（真实扫描 + 真实路由端到端）均通过 |
 | 开发服务器 | `http://127.0.0.1:<port>` 返回 HTTP 200；`/src/music-app.ts`、`/src/music.css` 转译正常 |
 
 ## 7. 变更记录
@@ -142,3 +155,4 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 | 2026-10-05 | 基线验证：`tsc --noEmit` 通过、`vite build` 通过（97 模块/2.5s）、dev 服务器 HTTP 200；修正文档中"命令需在 `app/` 内执行"；清理误建的空 `package-lock.json` | 确认基线真实可运行，并把踩到的坑写进工作卡 |
 | 2026-10-06 | 需求 A（跨列卡顿）诊断 + 修复：新增 `poolAlbumCapacity()`，图集按"同帧可达专辑数"分配（79 张曲库 108MB→20MB，1/5.4）；封面缩放改 `fetch`+`createImageBitmap` 移出主线程；已缓存缩略图一次绘成；`reset()` 支持扩容；`check-music-scene` 增加容量不变量断言；新增诊断脚本 `diagnose-atlas-remap.mjs` | 跨列一步重映射一整列槽位并逼出 108MB 整表上传，且伴随主线程集中缩放 —— 即用户报告的"换列瞬间严重卡顿" |
 | 2026-10-06 | 记录两条基线既有缺陷（`check:music` 无扩展名导入致链路断裂、`check-music-model` 白天玻璃粗糙度断言不符），未修改 | 属第三方二次修改遗留，与本次改动无关；修改需先确认原意 |
+| 2026-10-06 | 需求 B/C/D 一次性实现并提交（`512b55d`）：新增 `music-archive.ts` + `content/album-archives.json` + `music-archive.css`；新增 `music-detail-switch.ts` + `music-lyrics-switch.css` + `#detail-surface` 包裹层；新增 `music-lyrics.ts` + `music-lyrics-pane.ts` + `scripts/lyrics.mjs` + `GET /api/lyrics/:trackId`；`music-app.ts` 接线（构造面板与控件、时间流复用 `player.subscribe`、离开详情复位开关）；新增 2 个检查脚本并纳入 `check:music` | 用户要求剩余需求一次处理完；三者都落在详情页同一处，接线天然共用，分成三次提交需要人为造中间态，反而更容易出错 |
