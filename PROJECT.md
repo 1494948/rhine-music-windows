@@ -32,9 +32,14 @@
 
 ## 4. 启动 / 构建 / 打包
 
+> ⚠️ **`package.json` 不在仓库根，而在 `app/` 子目录**（仓库根是打包层：LICENSE/NOTICE/README-Windows/app.ico）。
+> **所有 npm 命令必须先进入 `app/` 再执行**，否则报 `ENOENT: Could not read package.json`。
+
 ```bash
-# 安装依赖（只跑一次；node_modules 不入库）
-npm install
+cd "C:/AI Document/projects/rhine-music-local-mod/app"   # ← 必须
+
+# 依赖：node_modules 已从基线分发包复制就位（112MB，不入库），一般无需重装
+# 若确需重装：npm install
 
 # 开发态：界面（Vite，127.0.0.1）
 npm run dev
@@ -42,12 +47,21 @@ npm run dev
 # 开发态：本地音乐服务（另开一个终端）
 npm run music
 
-# 类型检查 + 构建（prebuild 会自动跑 export-records.mjs）
+# 类型检查（已验证通过）
+npx tsc --noEmit
+
+# 类型检查 + 构建 + PWA 化（prebuild 会自动跑 export-records.mjs）
 npm run build          # = tsc && vite build && node scripts/build-pwa.mjs
 
 # 内容/界面自检
 npm run check:music    # 一揽子检查（曲库、专辑介绍、动效、相机、灯光、模型等）
 npm run check:content
+```
+
+**只做构建、不动 `content/` 的安全做法**（避免 `export-records.mjs` 改动受版本管理的文件）：
+
+```bash
+cd "C:/AI Document/projects/rhine-music-local-mod/app" && npx vite build
 ```
 
 **用独立测试数据目录**（避免污染真实曲库索引）：
@@ -84,11 +98,33 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
   删了可能影响构建或运行表现。原样保留。
 - **真机性能问题的观测口**：WebView2 无法直接开 DevTools，需给启动器加
   `--remote-debugging-port=9222`，或用 `启动音乐播放器.bat` 走系统浏览器调试。
+- **`npm install` 在本机 AI 沙箱内会失败**（报 esbuild 安装脚本 spawn 失败、`status: null`、
+  `pid: 0`；实测 `@esbuild/win32-x64/esbuild.exe --version` 本身可正常执行 → 属安装脚本的
+  环境问题，非项目问题）。**绕过方式**：直接复制基线分发包的 `app/node_modules`（已验证可用，
+  112MB）。用户在自己的终端里重装通常不受影响。
+- **`npm install --prefix <dir>` 不会改变读取 `package.json` 的工作目录**：必须在命令里
+  `cd` 进 `app/`，否则 npm 会在当前目录找 `package.json` 并在该目录写下空的
+  `package-lock.json`（本次已误建一个并清理）。
+- **`export-records.mjs`（prebuild/predev 自动执行）会改动受版本管理的
+  `content/`、`public/archives/`**：想让工作区保持干净，构建时用 `npx vite build` 绕过。
 - 键盘操作是主要交互：`←/→` 切分类、`↑/↓` 换专辑、`Enter` 打开、`Esc` 返回。
 - 构建产物 / 依赖体积：`node_modules` ≈112MB、`dist` ≈38MB，均不入库。
+
+## 6.1 已验证的环境事实（2026-10-05）
+
+| 项 | 实测值 |
+|---|---|
+| Node | 22.22.2（managed，`C:\Users\徐梓烽\.workbuddy\binaries\node\versions\22.22.2-3\node.exe`） |
+| vite（lock 实际解析） | 7.3.6 |
+| esbuild | 0.28.2 |
+| `npx tsc --noEmit` | 通过，退出码 0 |
+| `vite build` | 通过，97 模块，耗时 ≈2.5s |
+| 开发服务器 | `http://127.0.0.1:<port>` 返回 HTTP 200；`/src/music-app.ts`、`/src/music.css` 转译正常 |
 
 ## 7. 变更记录
 
 | 日期 | 改了什么 | 为什么 |
 |---|---|---|
 | 2026-10-05 | 建仓：从 `Downloads\Rhine-Music-Windows-0.3.0-二次修改\` 复制源码（74MB），写 `.gitignore`，`git init -b main`，首次提交并打标签 `baseline/thirdparty-0.3.0` | 建立可对比、可回滚的本地基线；全程不配置远端 |
+| 2026-10-05 | 加入 `PROJECT.md` 与 `docs/`（改造实现方案 + 3 张参考截图） | 按 AI Document 规范补工作卡；方案随仓库走，便于开发助手直接读取 |
+| 2026-10-05 | 基线验证：`tsc --noEmit` 通过、`vite build` 通过（97 模块/2.5s）、dev 服务器 HTTP 200；修正文档中"命令需在 `app/` 内执行"；清理误建的空 `package-lock.json` | 确认基线真实可运行，并把踩到的坑写进工作卡 |
