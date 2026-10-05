@@ -10,8 +10,8 @@
 
 **开发中** · 最后更新：2026-10-06
 
-- 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板；需求 C 小白条详情⇄歌词切换；需求 D 歌词解析/接口/动效面板
-- 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需真机验证**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）；需求 C 的 `--switch-top` / `--switch-bottom` 落点、需求 B 的档案补录内容需按实机与真实曲库调整
+- 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板；需求 C 小白条详情⇄歌词切换；需求 D 歌词解析/接口/动效面板；`app/dist` 已回灌为含 B/C/D 的最新构建（175 文件，MD5 校验一致）
+- 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需真机验证**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）；需求 C 的 `--switch-top` / `--switch-bottom` 落点、需求 B 的档案补录内容需按实机与真实曲库调整；真机验证需把 `app/dist` 与改动的 `app/scripts/` 同步进分发副本（见第 4 节末）
 
 ## 3. 技术栈与关键依赖
 
@@ -111,6 +111,28 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
   达到批量删除阈值），报 `[safe-delete][SAFE_DELETE_BULK_CONFIRM_REQUIRED]`。这是环境限制，
   不是代码错误（`✓ 97 modules transformed` 已经成功）。绕过方式：输出到新目录，例如
   `npx vite build --outDir "C:/AI Document/playground/rhine-music-local-mod-app/dist" --emptyOutDir`。
+- **构建产物必须以 `robocopy /MIR` 回灌 `app/dist`（2026-10-06 已跑通）**：因为上一条限制，
+  `app/dist` 无法被 vite 自己清空，会长期停在旧构建上（旧哈希资产残留、新哈希资产缺失，
+  界面看起来"改了没生效"）。已验证的回灌命令（注意 `MSYS2_ARG_CONV_EXCL='*'` 必不可少）：
+
+  ```bash
+  export PATH="/usr/bin:/bin:/c/Windows/System32:$PATH"
+  export MSYS2_ARG_CONV_EXCL='*'
+  export MSYS_NO_PATHCONV=1
+  robocopy "C:/AI Document/playground/rhine-music-local-mod-app/dist" \
+           "C:/AI Document/projects/rhine-music-local-mod/app/dist" \
+           /MIR /NFL /NDL /NP /R:2 /W:2
+  ```
+
+  **不加 `MSYS2_ARG_CONV_EXCL='*'` 会静默失败**：Git Bash 把 `/MIR` 当成 POSIX 绝对路径改写为
+  `.../PortableGit/versions/1.2.0/MIR`，robocopy 报 `错误: 无效参数 #3`、退出码 16，
+  **一个文件都不会复制**（退出码非 0 容易当成"已执行"）。
+  回灌后必须做内容级校验：文件清单 `diff` + 逐文件 `md5sum` 两处一致，再看 `index.html`
+  引用的是不是新哈希。`robocopy` 的 RC 语义是位掩码，`3` = 复制(1) + 存在多余文件已清除(2)，属正常。
+- **`npm run build` 里的 `build-pwa.mjs` 对本包无实际作用**：`index.html`（源码与产物都）**没有**
+  `navigator.serviceWorker.register`，所以 `sw.js` / `pwa-build.json` 是生成出来却无人调用的惰性文件
+  （分发包里确实有它们，但也同样没被注册）。裸 `npx vite build` 跳过 PWA 步骤功能上无损失，
+  且少一层缓存更利于迭代验证——本项目 `app/dist` 就一直是不含 `sw.js` 的形态。
 - **基线既有缺陷 1 —— `npm run check:music` 链路会在 `check-music-player.mjs` 断掉**：
   `src/music-player.ts:6` 以无扩展名写法导入 `"./native-playback"`，`node --experimental-strip-types`
   无法解析（`ERR_MODULE_NOT_FOUND`）。全仓库共 100 处这种无扩展名相对导入（带扩展名的仅 17 处），
@@ -132,7 +154,11 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
   正因为写了就必须署名，`sources` 字段会一并显示。
 - 键盘操作是主要交互：`←/→` 切分类、`↑/↓` 换专辑、`Enter` 打开、`Esc` 返回。
   小白条聚焦后 `Enter/Space` 切换详情⇄歌词、`↑/↓` 取向、`Home/End` 直达两端（已 `stopPropagation`，不会连带换专辑）。
-- 构建产物 / 依赖体积：`node_modules` ≈112MB、`dist` ≈38MB，均不入库。
+- 构建产物 / 依赖体积：`node_modules` ≈112MB、`dist` **74MB / 175 个文件（2026-10-06 实测）**，均不入库。
+  构成：`fonts` 19MB、`demo-covers` 7.4MB、`assets` 7.8MB（含两个 `.glb` 模型 3.3+3.6MB）、`audio` 3.0MB。
+  **注意 `dist/public/`（37MB）是 `dist/` 除 `public/` 外几乎全部内容的逐项重复**
+  （fonts/demo-covers/assets/audio/archives/licenses/icons 一一对应）——它来自源码里
+  嵌套的 `app/public/public/`。真实体积约 37MB，另 37MB 是这一层重复，**属上游打包脚本行为，不要删**。
 
 ## 6.1 已验证的环境事实（2026-10-05）
 
@@ -145,6 +171,7 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 | `vite build` | 通过，104 模块（需求 A 时为 97），耗时 ≈2.4–3.5s |
 | 新增检查脚本 | `check-music-lyrics`（解析/档案/服务端读取/样式契约）与 `check-music-lyrics-api`（真实扫描 + 真实路由端到端）均通过 |
 | 开发服务器 | `http://127.0.0.1:<port>` 返回 HTTP 200；`/src/music-app.ts`、`/src/music.css` 转译正常 |
+| `app/dist` 回灌 | `robocopy /MIR` 成功（复制 48 / 清除 5 个过期哈希资产 / 失败 0），回灌后 **175 个文件与 playground 构建逐文件 MD5 一致**；`index.html` 已指向新哈希 `index-Cw5FAImN.js` |
 
 ## 7. 变更记录
 
@@ -156,3 +183,4 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 | 2026-10-06 | 需求 A（跨列卡顿）诊断 + 修复：新增 `poolAlbumCapacity()`，图集按"同帧可达专辑数"分配（79 张曲库 108MB→20MB，1/5.4）；封面缩放改 `fetch`+`createImageBitmap` 移出主线程；已缓存缩略图一次绘成；`reset()` 支持扩容；`check-music-scene` 增加容量不变量断言；新增诊断脚本 `diagnose-atlas-remap.mjs` | 跨列一步重映射一整列槽位并逼出 108MB 整表上传，且伴随主线程集中缩放 —— 即用户报告的"换列瞬间严重卡顿" |
 | 2026-10-06 | 记录两条基线既有缺陷（`check:music` 无扩展名导入致链路断裂、`check-music-model` 白天玻璃粗糙度断言不符），未修改 | 属第三方二次修改遗留，与本次改动无关；修改需先确认原意 |
 | 2026-10-06 | 需求 B/C/D 一次性实现并提交（`512b55d`）：新增 `music-archive.ts` + `content/album-archives.json` + `music-archive.css`；新增 `music-detail-switch.ts` + `music-lyrics-switch.css` + `#detail-surface` 包裹层；新增 `music-lyrics.ts` + `music-lyrics-pane.ts` + `scripts/lyrics.mjs` + `GET /api/lyrics/:trackId`；`music-app.ts` 接线（构造面板与控件、时间流复用 `player.subscribe`、离开详情复位开关）；新增 2 个检查脚本并纳入 `check:music` | 用户要求剩余需求一次处理完；三者都落在详情页同一处，接线天然共用，分成三次提交需要人为造中间态，反而更容易出错 |
+| 2026-10-06 | 构建产物回灌：把 `playground` 的新构建用 `robocopy /MIR` 覆盖 `app/dist`（复制 48 / 清除 5 个过期哈希资产），逐文件 MD5 校验 175 项全部一致，并确认 `detail-switch`/`switch-float`/`music-lyrics`/`--reveal` 遮罩/`data-d` 四级/`api/lyrics` 等 B/C/D 令牌均在产物中；工作卡登记 `MSYS2_ARG_CONV_EXCL='*'` 这一必需开关与 `build-pwa` 惰性结论 | 回灌前 `app/dist` 停在基线旧构建，任何按 `app/dist` 起服务的验证（`npm run music`、真机分发副本）都会看不到 B/C/D 生效 |
