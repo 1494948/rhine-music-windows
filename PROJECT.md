@@ -12,7 +12,14 @@
 
 - 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板（四级来源）；需求 C 小白条详情⇄歌词切换（含视觉精修与惯性抛掷）；需求 D 歌词解析/接口/动效面板；**需求 B 的第四层「线上补充专辑详情与背景」已补全并真机实测**；`app/dist` 已回灌为最新构建（175 文件，MD5 校验一致）
 - **第二轮（2026-10-06）已完成**：需求 A 的第二轮修复（**图集脏矩形上传**，见 §6.2；**详情栏就地增量更新**）；需求 D 新增**「歌词」参数设置模块**（字号/行距/颜色/渐变/浮动/延迟等 11 项，即时生效并持久化）；需求 D 的歌词细线已移除、动效按 AMLL 模型重做（逐字柔边遮罩 + 未唱部分降亮 + 字号纵深 + 辉光）；**线上来源整体替换为国内可访问集合**（QQ 音乐 / 百度百科 / MusicBrainz，实测 4/4 命中，见 §6.3）
-- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.1/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现）。**注意：该包内含第一轮构建，第二轮改动需重新打包后才在其中生效**
+- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.1/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现）
+
+> ⚠️ **上面那个包已经过期，不要再拿它验收**（2026-10-06 21:0x 核实）：
+> 包内 `app/dist` 是 **09:22** 构建（入口 `index-Dx5c5WkF.js`），而仓库 `app/dist` 是 **13:57** 构建
+> （入口 `index-vOTKXiS1.js`）。因此该包**不含**细线移除、歌词参数模块、图集脏矩形上传
+> —— 也就是 `72d7c4a` 那一整轮。用它验收会得到"细线还在、卡顿只改善一部分"的错误结论。
+> **任何验证之前先确认运行的是哪次构建**，方法见 §6「包内入口哈希必须与仓库一致」。
+> 下一步是重建为 `v0.3.0-local.2`（见 `docs/第三轮改造计划.md` 的 P0）。。**注意：该包内含第一轮构建，第二轮改动需重新打包后才在其中生效**
 - 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需你在真实 GPU 下确认**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）。验证环境见第 6 节末的零拷贝回路。需求 C 的 `--switch-top` / `--switch-bottom` 落点还需按实机继续调。**图集脏矩形上传的上下方向必须目视确认一次**（见 §6.2 的翻转推导；若封面显示错位/镜像，把 `CoverAtlas.uploadTile` 的返回值改成恒 `false` 即回到整面上传）
 
 ## 3. 技术栈与关键依赖
@@ -205,7 +212,33 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 - **运行时 `node_modules` 只需 6.74 MB**：`music-server.mjs` 的导入闭包只到 `music-metadata` 与
   `opencc-js` 及其 13 个传递依赖（`opencc-js` 自身 5.81 MB 是大头）。`three` 不进运行时（已被 vite
   打进 `dist`）。完整副本 110.5 MB，其余全是构建期依赖。**打包脚本按导入闭包自动计算，不要手写包名列表。**
-- 键盘操作是主要交互：`←/→` 切分类、`↑/↓` 换专辑、`Enter` 打开、`Esc` 返回。
+- **包内入口哈希必须与仓库一致（2026-10-06 教训）**：`v0.3.0-local.1` 打包后源码又前进了一轮，
+  于是"包存在 ≠ 包是新的"。正确的核对方式（一行，包内 dist 与仓库 dist 的入口文件名必须相同）：
+  ```bash
+  grep -o 'assets/index-[A-Za-z0-9_-]*\.js' \
+    "C:/AI Document/releases/rhine-music-local-mod/v0.3.0-local.<N>/app/dist/index.html" \
+    "C:/AI Document/projects/rhine-music-local-mod/app/dist/index.html"
+  ```
+  `scripts/package-windows.mjs` 已计划加入这条断言（不一致即退出码 1），避免再次交付旧包。
+
+- **`http_proxy` 会截获回环地址（2026-10-06 实测）**：本机 shell 环境里有
+  `http_proxy=https_proxy=HTTP_PROXY=HTTPS_PROXY=http://127.0.0.1:9646`。于是
+  `curl http://127.0.0.1:5173/api/health` 返回 `502 upstream connect failed ... (os error 10061)`，
+  而服务其实是好的。**测本机服务一律加 `--noproxy '*'`。**
+  推论（重要）：**站点可达性不能用 curl 测** —— curl 会被沙箱出口代理接走，
+  测出来的是沙箱的结论、与用户家庭宽带无关。必须用 Node 内置 fetch
+  （undici 默认**不读** `http_proxy`），这与应用里 `AlbumOnlineResolver` 的视角一致。
+  `playground/rhine-perf/source-probe*.mjs` 就是按这个原则写的。
+
+- **本机可能无法启动浏览器进程（2026-10-06 实测，与上一轮相反）**：`msedge.exe --version`
+  零输出且退出码 0；`--headless=new --dump-dom` 同样零输出；用独立 `--user-data-dir` 启动后
+  配置目录连 `SingletonLock` 都不生成，服务端访问日志里**一条请求都没有**。
+  bash 直启、Node `spawn`（args 数组，绕开 MSYS）、`dangerouslyDisableSandbox` 三种方式全部无效。
+  **不要再把"打开浏览器验证"当成默认可行的一步**；先跑一次
+  `node playground/rhine-perf/headless-check.mjs`，有 DOM 输出才继续。
+  测量台与探针已备好（`playground/rhine-perf/`），环境允许时可直接复用。
+
+- **键盘操作是主要交互**：`←/→` 切分类、`↑/↓` 换专辑、`Enter` 打开、`Esc` 返回。
   小白条聚焦后 `Enter/Space` 切换详情⇄歌词、`↑/↓` 取向、`Home/End` 直达两端（已 `stopPropagation`，不会连带换专辑）。
 - 构建产物 / 依赖体积：`node_modules` ≈112MB、`dist` **74MB / 175 个文件（2026-10-06 实测）**，均不入库。
   构成：`fonts` 19MB、`demo-covers` 7.4MB、`assets` 7.8MB（含两个 `.glb` 模型 3.3+3.6MB）、`audio` 3.0MB。
@@ -347,6 +380,8 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 2026-10-06 | 打包并验证 `releases/rhine-music-local-mod/v0.3.0-local.1/`（515.0 MB，基座 778 MB，省 263 MB）；包内 `runtime/node.exe` 起服务实测：静态首页 200 且引用新哈希 `index-Dx5c5WkF.js`、`/api/library` 返回真实 79 张、`/api/album-online/:id` 门控与命中均正确、歌词接口返回 SYLT 逐字同步；`RhineMusic.exe` 从 Bash 侧启动后监听 127.0.0.1:5175/5176 并生成 14 MB WebView2 配置目录（验证完即删） | 分发副本是唯一能证明"用户双击就能开"的证据；顺带证明裁剪到 15 包的依赖闭包完整可用 |
 | 2026-10-06 | 自检：`tsc --noEmit` 退出码 0；`vite build` 104 模块 / 2.75s 落入干净 playground；`robocopy /MIR` 回灌 `app/dist`（复制 8 / 清除 3 个过期哈希资产），**175 个文件逐文件 MD5 全部一致**；`check:music` 12 脚本中 10 通过、2 失败（均为已登记的基线既有缺陷，与本次改动无关）；产物令牌核查 `detail-switch-halo`(9)/`switch-breathe`(2)/`switch-glint`(2)/`archive-actions`(2)/`archive-online-status`(2)/`animation-play-state`(2)/JS `online-album`(3)/`online-library`(2)/`consent`(1)/`dragVelocity`(6)/`releaseTarget`(2) 全部落地，旧 CSS 令牌计数为 0 | 交付前必须自证"改的代码真的进了产物"，而不是只看源码 |
 | 2026-10-06 | 登记线上层的实测结论与三条新环境约束（§6「线上补录的四条实测事实」与「`robocopy` 不能复制单个文件」「原生 Node 读不了 Git Bash 的 `/tmp`」，另见 §6.1）：`robocopy` **不能**复制单个文件（源按目录处理，报错 123）；原生 Windows Node **读不了** Git Bash 的 `/tmp`（解析成 `C:\tmp\`）；`rm` 日志文件会触发安全删除钩子（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`） | 三条都是"命令成功但结果不对"或"无谓卡住"的陷阱 |
+| 2026-10-06 | **第三轮：先找问题 → 做计划**。新增 `docs/第三轮改造计划.md`（含简报压缩表、卡顿根因定位、AMLL 动效差距表、13 项参数现状、28 个候选数据源的实测矩阵、P0–P4 计划与验收）；`PROJECT.md` 修正 §2 里"已产出本地可安装包"的不准确表述（包内 dist 是 09:22 构建、仓库是 13:57，**包不含 `72d7c4a` 那一轮**），并登记三条新环境约束（包内入口哈希核对法、`http_proxy` 截获回环致数据源可达性必须用 Node 而非 curl 测、本机浏览器进程可能被沙箱中和）；本轮不修改任何功能源码 | 用户要求"先找到问题、做计划、再解决"；且必须先纠正"包是新的"这一错误前提，否则后续所有验收都会被旧包误导 |
+| 2026-10-06 | 建立可复用的卡顿测量台（`playground/rhine-perf/`）：`probe.js`（LoAF 长帧归因 + longtask + rAF 间隔 + WebGL 纹理上传字节 + 解码次数，自带 20 次换向切换动作与分阶段心跳）、`collector.mjs`、`launch.mjs`（5173 注入探针的产物 + 5199 收集器，带请求日志）、`open-edge.mjs`、`headless-check.mjs`、`source-probe*.mjs`。本轮未能取得运行时采样（浏览器进程被中和、`http_proxy` 截获回环、后台服务被中途回收），测量台原样保留待环境允许或由真机执行 | 卡顿必须能被量化验收，而不是靠"感觉好点了"；同时把"测不了"这件事本身也变成可复现的记录，而不是含糊带过 |
 | 2026-10-06 | **第二轮（需求 A 剩余卡顿 + 需求 D 细化 + 需求 B 来源替换）**：①`cover-atlas.ts` 新增 `atlasSubRectY()` + `attachRenderer()` + `uploadTile()`，图集上传由整面 21 MB 变脏矩形 262 kB（约 80×），`scene.ts` 接线；②`music-app.ts` 新增 `detailSkeleton()` 与 `syncTabState()`，`renderDetail()` 由整栏 `innerHTML` 重建改为就地写 5 个区域 + 跳过未变的指示器读取，`music-archive.css` 增 `.archive-mount{display:contents}`；③歌词细线（`.lyric-line[data-d="0"]::after`）整体删除，逐字层由 `clip-path` 硬切改为柔边 `mask-image`（`--ly-fade` = AMLL 的 `wordFadeWidth`），新增未唱部分降亮、字号纵深、`lyric-float` 关键帧与辉光；④新增 `lyrics-settings.ts/.css` 与设置面板「歌词」（11 项参数 + 实时预览 + 颜色跟随主题 + 恢复默认，存 `rhine-lyric-preferences`）；⑤`album-online.mjs` 删除维基通道，新增 `qq()`/`baike()` 及两条错答防护、`titleVariants()`、`STATEMENT_SLOTS` 语句槽位去重、Apple Music 降为二阶段、检索链接改百度；⑥`check-music-online`/`check-music-lyrics`/`check-music-scene` 补断言 | 用户要求"先找到问题、做计划、再解决"：图集整面重传与详情栏重建是剩余卡顿的实测主因；细线与动效、参数可调、国内来源分别对应其余三项明确要求 |
 | 2026-10-06 | 修好基线既有缺陷之一：`music-player.ts` 的 `"./native-playback"` 补扩展名，并使 `NativePlaybackClient` 在无 `window` 时不抛错；`check-music-player` 由 0/4 变为 **4/4 通过**。`check-music-model` 仍失败并再次登记为基线既有（本轮未碰其唯一依赖 `music-model.ts`） | `check:music` 是项目自带的验收命令，其中一步长期无法加载模块意味着它从未真正运行过；无 `window` 判空属模块自身健壮性（`transport` 本就有 `"none"` 态） |
 | 2026-10-06 | 第二轮自检：`tsc --noEmit` 退出码 0；`vite build` **106 模块 / 2.71s** 落入干净 playground；`robocopy /MIR` 回灌 `app/dist`（复制 8 / 清除 5 / 失败 0），**175 文件逐文件 MD5 一致**；线上层真实联网实测（`playground/rhine-source-probe/smoke.mjs`）4/4 命中、Apple Music 全程零请求；产物令牌核查 `archive-mount`(2)/`lyric-preview`(2)/`lyric-settings`(2)/`rhine-lyric-preferences`(1)/`lyric-color-reset`(1)/`lyric-float`(1)/`__webglTexture`(1)/`texSubImage2D`(1)/`在百度搜索更多`(1)/新令牌 `--ly-size`(6)/`--ly-pitch`(2)/`--ly-fade`(8)/`--ly-unsung`(3)/`--ly-glow-size`(3)/`--ly-float`(6)/`--line-h`(7) 全部落地，**旧实现残留 `--line-p`(0)/`维基百科`(0)/`lineEndTime`(0)** | 交付前必须自证"改的代码真的进了产物"、且旧实现没有残留，而不是只看源码 |
