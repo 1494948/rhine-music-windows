@@ -147,9 +147,11 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
    （16 张真实专辑封面）**，并把 `music-data-v3/config.json` 的 `roots` 清空为 `[]`。
    否则等于公开用户本人的音乐清单与私人绝对路径。打包脚本目前**不自动做这件事**，
    发新版本时必须手动重复这一步（或后续给脚本加 `--public` 开关）。
-2. **源码里的 Windows 用户名已脱敏**。`徐梓烽` 曾出现在 5 个受版本管理的文件中（12 处），
-   已全部替换为 `<用户名>`；`scripts/package-windows.mjs` 的 `DEFAULT_BASE` 改由
-   `os.homedir()` 推导，不再硬编码机器路径。
+2. **源码里的 Windows 用户名已脱敏**。本机用户名（即用户目录名本身）曾出现在 5 个受版本管理的文件中（12 处），
+   已全部替换为 `<用户名>` 占位符；`scripts/package-windows.mjs` 的 `DEFAULT_BASE` 改由
+   `os.homedir()` 推导，不再硬编码机器路径。**记录这件事时不要在文档里写出该名字的字面量**——
+   否则脱敏等于没做（本次已踩过一遍，见 §7 变更记录）。自检命令：
+   `git grep -c "<本机用户名>" rhine-music-local-mod -- .` 须无输出。
 
 **许可边界（用户已知情并选择照原样公开）**：`NOTICE.md` 声明原作 PV 采样
 （`typing-preview.wav`、`typing-samples.ts` 的三个 38ms 短音）、3D 模型与 MiSans 字体
@@ -434,5 +436,5 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 2026-10-06 | **第三轮 P2（歌词动效对齐 AMLL）**：`music-lyrics.ts` 新增 `splitUnits`（汉字逐字/拉丁按词/空白成单元）+ `unitReveal`（逐字进度，单调不回退）；`music-lyrics-pane.ts` 唱行惰性拆分为逐字单元（`--g` 每帧只写变化的单元）、行进入/退出（`--ly-enter` 四级）、间奏律动点（`setInterlude` 类切换，纯 CSS 呼吸）；`music-lyrics-switch.css` 逐字上浮/呼吸、`lyric-settle` 过冲、高亮行放大 `--ly-active-scale`、`.lyric-units` 包裹层（修 `.lyric-fill` 是 flex 会把单元变 flex-item 不换行的坑）；`check-music-lyrics` 补 `splitUnits`/`unitReveal` 断言与 `--g` 契约 | 用户要求"以画面为重、性能可舍"，逐字层从一行一个裁剪百分比升级为逐字独立变换；每个新增动效都必须可关可调 |
 | 2026-10-06 | **第三轮 P3（歌词参数模块补全）**：`lyrics-settings.ts` 参数 13→20 项、四组分类（字号版式/颜色高亮/动效/时间）、每项复位 + 分组复位、三套预设（克制/Apple Music/AMLL）、JSON 导入导出（`applyLyricPatch` 统一钳位）、预览可选歌选行 + 跟随播放（`lyricPreviewMarkup`/`setLyricPreviewSample`）；`music-app.ts` 接线（`previewTracks`/`previewDocument`/`syncPreviewFollow` 等 + 新动作分发）；`check-music-lyrics` 补 P3 接线断言 | 用户要求参数模块"专门的模块"且"每项可关可调"，预览要与真实面板同源防漂移 |
 | 2026-10-06 | **第三轮 P0（打包）+ 收尾**：`vite build` 106 模块落入 `playground/rhine-build-p3`，`robocopy /MIR` 回灌 `app/dist`（175 文件、入口 `index-B7tTgcKt.js`、MD5 一致）；`scripts/package-windows.mjs` 默认输出改 `.3`、新增**入口哈希一致性断言**（包内 `index.html` 引用的入口必须存在于 `assets/`）；产出 `releases/rhine-music-local-mod/v0.3.0-local.3/`（515MB，全部 MD5 一致）；新增 `docs/发布说明-v0.3.0-local.3.md` | 修好 `check-music-model` 基线缺陷后打包，让用户能双击看到 P0–P3 效果；入口断言防"包存在≠包新"再犯 |
-| 2026-10-06 | **P4 后：发布到 GitHub（新分支）**。① 新增根 `README.md`（公开分支的门面：非官方衍生声明、P1–P4 改动总表、构建与放包说明、许可边界）；② 隐私脱敏——`徐梓烽` 在 5 个受版本管理文件里共 12 处，全部替换为 `<用户名>` 占位符，`scripts/package-windows.mjs` 的 `DEFAULT_BASE` 改由 `os.homedir()` 推导（不再硬编码路径，可用 `--base` / `RHINE_BASE` 覆盖）；③ `git remote add origin https://github.com/1494948/rhine-music-windows.git`，`ls-remote` 预检确认远端只有 `main`、目标分支名不存在；④ 源码推为新分支 `rhine-music-local-mod`；⑤ 发布包剥离私人数据后打 ZIP 走 GitHub Release 附件 | 用户明确要求"原本的 github 仓库新开一个分支，把源代码和发布版弄上去"：exe/dll 各 117 MB 超 GitHub 单文件 100 MB 硬限，发布版只能走 Release 附件；发布包内 `music-data-v3` 含真实曲库索引（79 张专辑 + 16 张真实封面 + 私人绝对路径），公开前必须剥离 |
+| 2026-10-06 | **P4 后：发布到 GitHub（新分支）**。① 新增根 `README.md`（公开分支的门面：非官方衍生声明、P1–P4 改动总表、构建与放包说明、许可边界）；② 隐私脱敏——本机用户名在 5 个受版本管理文件里共 12 处，全部替换为 `<用户名>` 占位符，`scripts/package-windows.mjs` 的 `DEFAULT_BASE` 改由 `os.homedir()` 推导（不再硬编码路径，可用 `--base` / `RHINE_BASE` 覆盖）；**踩到并修好一个自伤**——在文档里描述脱敏时写出了用户名原文，等于把刚删掉的东西又提交上去，第二次提交才真正清干净（教训：记录脱敏动作时不得写出被脱敏的字面量，验收要用 `git grep` 而非肉眼）；③ `git remote add origin https://github.com/1494948/rhine-music-windows.git`，`ls-remote` 预检确认远端只有 `main`、目标分支名不存在；④ 源码推为新分支 `rhine-music-local-mod`；⑤ 发布包剥离私人数据后打 ZIP 走 GitHub Release 附件 | 用户明确要求"原本的 github 仓库新开一个分支，把源代码和发布版弄上去"：exe/dll 各 117 MB 超 GitHub 单文件 100 MB 硬限，发布版只能走 Release 附件；发布包内 `music-data-v3` 含真实曲库索引（79 张专辑 + 16 张真实封面 + 私人绝对路径），公开前必须剥离 |
 | 2026-10-06 | **第三轮 P4（数据源扩充）**：`album-online.mjs` 新增 `netease()`（`/api/search/get/web` 定 id → `/api/v1/album/{id}` 取 `description` 长简介，`opencc-js` 繁转简 + 空白压缩，`publishTime`→`millisToDate`，双重复核防错答）与 `discogs()`（年份/流派/载体，**不带 artist 参数**——Discogs 用拉丁化名匹配中文歌手名返回 0 行，按 "Artist - Title" 拆行匹配）、`wikidata()`（P577 发行日期，`wbsearchentities`+`wbgetentities` 用 alias 匹配中文 label，独立 3s 预算）；`resolve()` 第一阶段加 netease、第二阶段（末位）加 discogs/wikidata；`request()` 支持 per-call 超时；新增 `check-music-online-sources.mjs` 可达性自检（Node fetch 逐主机报 status/耗时/JSON）并纳入 `check:music`；`check-music-online.mjs` 补 netease/discogs/wikidata 的命中/错答拒绝/繁转简/末位门控断言；`music-app.ts`/`music-archive.ts` 来源文案加网易云。**覆盖率 39/79(49.4%) → 60/78(76.9%)，+27.5pp，报错 0**（netease 19 张、discogs 1 张） | 用户明确要求"把 P4 也做了，专辑背景知识用爬虫爬取"；网易云 v1 接口免登录可答且提供 QQ 缺失的长简介（19 张命中里 5 张是 QQ 没覆盖的），Discogs/Wikidata 按计划作 best-effort 末位、失败不影响整体 |
