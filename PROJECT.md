@@ -12,14 +12,23 @@
 
 - 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板（四级来源）；需求 C 小白条详情⇄歌词切换（含视觉精修与惯性抛掷）；需求 D 歌词解析/接口/动效面板；**需求 B 的第四层「线上补充专辑详情与背景」已补全并真机实测**；`app/dist` 已回灌为最新构建（175 文件，MD5 校验一致）
 - **第二轮（2026-10-06）已完成**：需求 A 的第二轮修复（**图集脏矩形上传**，见 §6.2；**详情栏就地增量更新**）；需求 D 新增**「歌词」参数设置模块**（字号/行距/颜色/渐变/浮动/延迟等 11 项，即时生效并持久化）；需求 D 的歌词细线已移除、动效按 AMLL 模型重做（逐字柔边遮罩 + 未唱部分降亮 + 字号纵深 + 辉光）；**线上来源整体替换为国内可访问集合**（QQ 音乐 / 百度百科 / MusicBrainz，实测 4/4 命中，见 §6.3）
-- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.1/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现）
+- **第三轮（2026-10-06）已完成 P0–P3**：需求 A 卡顿**彻底解决**（P1：文件头测尺寸一次解码到位 + 两级字节预算缓存 402MB→88MB + 快照面复用池 + 空闲预取 + 单飞详情解码）；歌词动效**对齐 AMLL**（P2：逐字独立变换 `--g`、行进入/退出、接手过冲、间奏律动点、高亮行放大，全部可关可调）；「歌词」参数模块补全（P3：四组分类 + 每项/分组复位 + 三套预设 + JSON 导入导出 + 预览选歌选行与跟随播放，13→20 项）；**顺手修掉长期基线缺陷 `check-music-model`（白天玻璃雾面被检查态拉低）**。全部检查 **13/13 通过**
+- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.3/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现，已加入口哈希一致性断言）
 
-> ⚠️ **上面那个包已经过期，不要再拿它验收**（2026-10-06 21:0x 核实）：
-> 包内 `app/dist` 是 **09:22** 构建（入口 `index-Dx5c5WkF.js`），而仓库 `app/dist` 是 **13:57** 构建
-> （入口 `index-vOTKXiS1.js`）。因此该包**不含**细线移除、歌词参数模块、图集脏矩形上传
-> —— 也就是 `72d7c4a` 那一整轮。用它验收会得到"细线还在、卡顿只改善一部分"的错误结论。
-> **任何验证之前先确认运行的是哪次构建**，方法见 §6「包内入口哈希必须与仓库一致」。
-> 下一步是重建为 `v0.3.0-local.2`（见 `docs/第三轮改造计划.md` 的 P0）。。**注意：该包内含第一轮构建，第二轮改动需重新打包后才在其中生效**
+> ⚠️ **包的关系（2026-10-06 核实，此前一度说错，以此为准）**：
+>
+> | 包 | 包内入口 | 内容 | 结论 |
+> |---|---|---|---|
+> | `v0.3.0-local.1` | `index-Dx5c5WkF.js`（09:22） | ❌ 仍有 `--line-p` | **已过期，别再验收** |
+> | `v0.3.0-local.2` | `index-vOTKXiS1.js`（13:57） | ✅ 第二轮 | 已被 `.3` 取代 |
+> | `v0.3.0-local.3` | `index-B7tTgcKt.js`（22:0x） | ✅ 第三轮 P0–P3 | **当前版** |
+>
+> 教训（保留）：**包存在 ≠ 包是新的**。核对方式 —— 包内与仓库 `app/dist/index.html` 的入口文件名必须逐字相同：
+> ```bash
+> grep -o 'assets/index-[A-Za-z0-9_-]*\.js' \
+>   "C:/AI Document/releases/rhine-music-local-mod/v0.3.0-local.<N>/app/dist/index.html" \
+>   "C:/AI Document/projects/rhine-music-local-mod/app/dist/index.html"
+> ```
 - 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需你在真实 GPU 下确认**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）。验证环境见第 6 节末的零拷贝回路。需求 C 的 `--switch-top` / `--switch-bottom` 落点还需按实机继续调。**图集脏矩形上传的上下方向必须目视确认一次**（见 §6.2 的翻转推导；若封面显示错位/镜像，把 `CoverAtlas.uploadTile` 的返回值改成恒 `false` 即回到整面上传）
 
 ## 3. 技术栈与关键依赖
@@ -112,8 +121,8 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 分支 | `main` |
 | 基线标签 | `baseline/thirdparty-0.3.0` |
 | 产品名 | Rhine Music（莱茵音乐）· 第三方二次修改版 |
-| 当前版本 | 本地包 `v0.3.0-local.1`（上游 `app/package.json` 仍为 `0.3.0`，不改上游版本号） |
-| 产物位置 | `releases/rhine-music-local-mod/v0.3.0-local.1/`（515 MB） |
+| 当前版本 | 本地包 `v0.3.0-local.3`（上游 `app/package.json` 仍为 `0.3.0`，不改上游版本号） |
+| 产物位置 | `releases/rhine-music-local-mod/v0.3.0-local.3/`（515 MB） |
 | 产物命名规则 | `v<上游版本>-local.<本地迭代号>` |
 | 打开方式 | 双击产物根目录的 `RhineMusic.exe`（原生 WebView2 窗口，不需要浏览器） |
 
@@ -171,11 +180,13 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
   `src/music-player.ts:6` 以无扩展名写法导入 `"./native-playback"`，`node --experimental-strip-types`
   无法解析（`ERR_MODULE_NOT_FOUND`）。全仓库共 100 处这种无扩展名相对导入（带扩展名的仅 17 处），
   属上游主流写法，**当前不改**（tsc/vite 都能解析）。要跑全链校验需先统一补 `.ts` 后缀。
-- **基线既有缺陷 2 —— `check-music-model.mjs` 断言失败**（`day retains its frosted finish…`）：
-  该脚本只导入 `music-model.ts`，与图集/布局改动无关；是二次修改者调了白天主题玻璃粗糙度
-  却未同步校验阈值（day 期望 0.42–0.50）。
-- 可运行校验现状（2026-10-06 实测，12 个脚本）：**10 通过 / 2 失败**（失败项即上面两条基线缺陷；
-  新增的 `check-music-lyrics`、`check-music-lyrics-api` 均通过）。
+- **基线既有缺陷 2 —— `check-music-model.mjs` 断言失败（已修，2026-10-06 第三轮）**：
+  根因是白天主题把玻璃粗糙度抬到 0.48，但 `setMusicGlassClarity` 却拿未主题化的基线 0.40 当锚点重算，
+  检查态（clarity=0）把白天的雾面拉回 0.40（低于断言下限 0.42）。修复：检查态以主题后的粗糙度为锚、
+  且日照方向也参与插值（day 休息 1.2× / 检查 1.1×，night 休息 1.0× / 检查 0.75×），
+  并每次从 frost 缩放后的基线重推而非复用上次写入，避免复合漂移。见 `music-model.ts`。
+- 可运行校验现状（2026-10-06 第三轮实测）：**13/13 通过**（独立运行 `playground/rhine-perf/run-checks.mjs`，
+  含此前失败的两条基线缺陷，本轮均已修复）。
 - **歌词来源约定（需求 D）**：同名 `.lrc` 优先（同上目录、基名一致；`.lrc/.LRC/.zh.lrc/.zh-CN.lrc/.zh_CN.lrc`），
   否则读内嵌 USLT/SYLT。`.lrc` 用 UTF-8 解不出来时会依次试 `gb18030/gbk/big5`。
   歌词**不写入曲库索引**（走 `GET /api/lyrics/:trackId` 按需读取 + 文件指纹缓存），
@@ -385,3 +396,7 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 2026-10-06 | **第二轮（需求 A 剩余卡顿 + 需求 D 细化 + 需求 B 来源替换）**：①`cover-atlas.ts` 新增 `atlasSubRectY()` + `attachRenderer()` + `uploadTile()`，图集上传由整面 21 MB 变脏矩形 262 kB（约 80×），`scene.ts` 接线；②`music-app.ts` 新增 `detailSkeleton()` 与 `syncTabState()`，`renderDetail()` 由整栏 `innerHTML` 重建改为就地写 5 个区域 + 跳过未变的指示器读取，`music-archive.css` 增 `.archive-mount{display:contents}`；③歌词细线（`.lyric-line[data-d="0"]::after`）整体删除，逐字层由 `clip-path` 硬切改为柔边 `mask-image`（`--ly-fade` = AMLL 的 `wordFadeWidth`），新增未唱部分降亮、字号纵深、`lyric-float` 关键帧与辉光；④新增 `lyrics-settings.ts/.css` 与设置面板「歌词」（11 项参数 + 实时预览 + 颜色跟随主题 + 恢复默认，存 `rhine-lyric-preferences`）；⑤`album-online.mjs` 删除维基通道，新增 `qq()`/`baike()` 及两条错答防护、`titleVariants()`、`STATEMENT_SLOTS` 语句槽位去重、Apple Music 降为二阶段、检索链接改百度；⑥`check-music-online`/`check-music-lyrics`/`check-music-scene` 补断言 | 用户要求"先找到问题、做计划、再解决"：图集整面重传与详情栏重建是剩余卡顿的实测主因；细线与动效、参数可调、国内来源分别对应其余三项明确要求 |
 | 2026-10-06 | 修好基线既有缺陷之一：`music-player.ts` 的 `"./native-playback"` 补扩展名，并使 `NativePlaybackClient` 在无 `window` 时不抛错；`check-music-player` 由 0/4 变为 **4/4 通过**。`check-music-model` 仍失败并再次登记为基线既有（本轮未碰其唯一依赖 `music-model.ts`） | `check:music` 是项目自带的验收命令，其中一步长期无法加载模块意味着它从未真正运行过；无 `window` 判空属模块自身健壮性（`transport` 本就有 `"none"` 态） |
 | 2026-10-06 | 第二轮自检：`tsc --noEmit` 退出码 0；`vite build` **106 模块 / 2.71s** 落入干净 playground；`robocopy /MIR` 回灌 `app/dist`（复制 8 / 清除 5 / 失败 0），**175 文件逐文件 MD5 一致**；线上层真实联网实测（`playground/rhine-source-probe/smoke.mjs`）4/4 命中、Apple Music 全程零请求；产物令牌核查 `archive-mount`(2)/`lyric-preview`(2)/`lyric-settings`(2)/`rhine-lyric-preferences`(1)/`lyric-color-reset`(1)/`lyric-float`(1)/`__webglTexture`(1)/`texSubImage2D`(1)/`在百度搜索更多`(1)/新令牌 `--ly-size`(6)/`--ly-pitch`(2)/`--ly-fade`(8)/`--ly-unsung`(3)/`--ly-glow-size`(3)/`--ly-float`(6)/`--line-h`(7) 全部落地，**旧实现残留 `--line-p`(0)/`维基百科`(0)/`lineEndTime`(0)** | 交付前必须自证"改的代码真的进了产物"、且旧实现没有残留，而不是只看源码 |
+| 2026-10-06 | **第三轮 P1（卡顿彻底解决）**：`cover-atlas.ts` 整体重写——`imageSizeFromHeader()` 读文件头测尺寸（PNG/GIF/BMP/WebP/JPEG，一次解码到位）、`ThumbnailCache` 两级字节预算缓存（瓦片 48MB + 详情 40MB，LRU 逐出，替换原 96×1024²≈402MB）、瓦片按 UV 内缩算 `tileSource`、`prefetch`/`schedulePrefetch` 空闲预热、快照面复用池（关 mipmap）；`scene.ts` 接线标签面复用池 + 出画卡片上限 + 预取；`check-music-scene` 补文件头解析与瓦片算术断言（修好 BMP 夹具的 14→18 字节偏移）。单飞详情解码（`queueDetail`/`pumpDetail`，连按只解最后一张）。**13 项检查全部通过** | 换专辑卡顿的剩余根因：解码两次 + 16× 像素、402MB 常驻、每步重建 1024² 纹理；用户已授权"性能可舍"但换专辑是主路径必须根治 |
+| 2026-10-06 | **第三轮 P2（歌词动效对齐 AMLL）**：`music-lyrics.ts` 新增 `splitUnits`（汉字逐字/拉丁按词/空白成单元）+ `unitReveal`（逐字进度，单调不回退）；`music-lyrics-pane.ts` 唱行惰性拆分为逐字单元（`--g` 每帧只写变化的单元）、行进入/退出（`--ly-enter` 四级）、间奏律动点（`setInterlude` 类切换，纯 CSS 呼吸）；`music-lyrics-switch.css` 逐字上浮/呼吸、`lyric-settle` 过冲、高亮行放大 `--ly-active-scale`、`.lyric-units` 包裹层（修 `.lyric-fill` 是 flex 会把单元变 flex-item 不换行的坑）；`check-music-lyrics` 补 `splitUnits`/`unitReveal` 断言与 `--g` 契约 | 用户要求"以画面为重、性能可舍"，逐字层从一行一个裁剪百分比升级为逐字独立变换；每个新增动效都必须可关可调 |
+| 2026-10-06 | **第三轮 P3（歌词参数模块补全）**：`lyrics-settings.ts` 参数 13→20 项、四组分类（字号版式/颜色高亮/动效/时间）、每项复位 + 分组复位、三套预设（克制/Apple Music/AMLL）、JSON 导入导出（`applyLyricPatch` 统一钳位）、预览可选歌选行 + 跟随播放（`lyricPreviewMarkup`/`setLyricPreviewSample`）；`music-app.ts` 接线（`previewTracks`/`previewDocument`/`syncPreviewFollow` 等 + 新动作分发）；`check-music-lyrics` 补 P3 接线断言 | 用户要求参数模块"专门的模块"且"每项可关可调"，预览要与真实面板同源防漂移 |
+| 2026-10-06 | **第三轮 P0（打包）+ 收尾**：`vite build` 106 模块落入 `playground/rhine-build-p3`，`robocopy /MIR` 回灌 `app/dist`（175 文件、入口 `index-B7tTgcKt.js`、MD5 一致）；`scripts/package-windows.mjs` 默认输出改 `.3`、新增**入口哈希一致性断言**（包内 `index.html` 引用的入口必须存在于 `assets/`）；产出 `releases/rhine-music-local-mod/v0.3.0-local.3/`（515MB，全部 MD5 一致）；新增 `docs/发布说明-v0.3.0-local.3.md` | 修好 `check-music-model` 基线缺陷后打包，让用户能双击看到 P0–P3 效果；入口断言防"包存在≠包新"再犯 |

@@ -117,14 +117,19 @@ export function musicAssemblyPart(surface: string) {
 /** Clarity applies to the glass substrate only; the cover never enters this path. */
 export function setMusicGlassClarity(material: THREE.MeshPhysicalMaterial, clarity: number, warmth = 0) {
   // Inspection softens the frosting slightly; it never becomes polished plastic.
-  // Scale from the current frosting so the haze slider keeps working while inspected.
+  // Daylight raises the whole frosted band — a pale backdrop needs more haze to
+  // read as glass — so both the resting roughness and the inspected softness are
+  // interpolated by warmth. The multipliers keep this in step with the
+  // Frosted_Polymer finish in MUSIC_GLASS_FINISH: day rests at 1.2× the baseline
+  // and inspects at 1.1×, night rests at 1.0× and inspects at 0.75×. Anchoring on
+  // the frost-scaled baseline (not a fixed number) keeps the haze slider working
+  // while inspected, and re-deriving from it on every call — rather than from
+  // whatever the last clarity wrote — keeps repeated updates from compounding.
   const daylight = THREE.MathUtils.clamp(warmth, 0, 1);
   const base = musicGlassRoughness(material);
-  material.roughness = THREE.MathUtils.lerp(
-    base,
-    THREE.MathUtils.lerp(base * 0.75, base * 1.1, daylight),
-    THREE.MathUtils.clamp(clarity, 0, 1),
-  );
+  const rest = THREE.MathUtils.lerp(base, base * 1.2, daylight);
+  const inspected = THREE.MathUtils.lerp(base * 0.75, base * 1.1, daylight);
+  material.roughness = THREE.MathUtils.lerp(rest, inspected, THREE.MathUtils.clamp(clarity, 0, 1));
 }
 
 export function createAlbumPrintMaterial(map: THREE.Texture) {

@@ -6,13 +6,34 @@ import { poolAlbumCapacity, LOOP_ROWS } from "./archive-loop.ts";
 
 // Print on the glass surface. No transmitting/frosted layer sits over the image.
 export const COVER_SIZE = MUSIC_COVER;
+/** `width`/`height` are the source artwork's own size; `source` is the decode. */
 type CoverImage = { source: HTMLCanvasElement | ImageBitmap; width: number; height: number };
 const COVER_PAINT_SIZE = 1024;
-// Thumbnails are retained, never the decoded multi-megapixel source art.
-const MAX_THUMBNAIL = 1024;
-// Hold the pool's albums so navigating back and forth never re-decodes a cover a
-// lane switch has already paid for; bounded so thumbnail memory stays finite.
-const IMAGE_CACHE_LIMIT = 96;
+/**
+ * The detail canvas is COVER_PAINT_SIZE. Tiles are `tileWidth` — 256 in
+ * practice, and never more than a quarter of this — so one decoded thumbnail
+ * cannot serve both.
+ *
+ * Decoding at 1024 to paint a 256 px tile costs sixteen times the pixels of the
+ * artwork that actually reaches the screen, and every album the shelf can reach
+ * paid it. This library's largest cover is 4000 x 4000 (16 MP, 64 MB decoded),
+ * so a lane switch that brings a whole shelf into the pool asked for ~79 such
+ * decodes at once. The two tiers below are what stop that: the shelf reads a
+ * thumbnail sized to its own tile, and the full-size decode is paid once, for
+ * the album the user actually opened.
+ */
+const DETAIL_THUMBNAIL = COVER_PAINT_SIZE;
+/**
+ * Cache bounds, counted in decoded RGBA bytes rather than entries.
+ *
+ * The old bound was a flat 96 entries; at 1024 px each that is ~402 MB of
+ * resident bitmaps, which makes a garbage-collection pause the most plausible
+ * explanation for a stutter that arrives "sometimes, unpredictably". Bytes are
+ * the quantity that actually matters, and a 256 px tile is only 262 kB, so a
+ * 79-album library now fits with room to spare instead of sitting at the limit.
+ */
+const TILE_CACHE_BYTES = 48 * 1024 * 1024;
+const DETAIL_CACHE_BYTES = 40 * 1024 * 1024;
 // Use the same UV margin at every texture resolution. A fixed two-pixel inset
 // made the 256px atlas artwork smaller than its 1024px lifted/returning copy.
 export const COVER_INSET = 1 / 128;
@@ -36,6 +57,89 @@ export function containCover(
     width: drawnWidth,
     height: drawnHeight,
   };
+}
+
+/**
+ * Intrinsic size of an encoded image, read from its header.
+ *
+ * Why not simply decode: `createImageBitmap` cannot be told "decode, but report
+ * the aspect ratio first", so preserving an aspect while resizing needs the
+ * dimensions before the resample. The obvious route — decode once to measure,
+ * then decode again to resize — parses the JPEG twice and materialises the full
+ * 16 MP bitmap on the way to an image that ends up 256 px wide. Reading a few
+ * dozen header bytes costs nothing by comparison, and lets the decoder be asked
+ * for the final size directly.
+ *
+ * `undefined` is a supported outcome: an unrecognised container falls back to a
+ * decode-measure-resample path in the caller.
+ */
+export function imageSizeFromHeader(
+  bytes: Uint8Array,
+): { width: number; height: number } | undefined {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const has = (count: number) => bytes.length >= count;
+  // PNG: 8-byte signature, then the IHDR chunk's width/height, big-endian.
+  if (has(24) && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47)
+    return { width: view.getUint32(16), height: view.getUint32(20) };
+  // GIF87a / GIF89a: logical screen size, little-endian.
+  if (has(10) && bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46)
+    return { width: view.getUint16(6, true), height: view.getUint16(8, true) };
+  // BMP: BITMAPINFOHEADER's biWidth/biHeight, signed (a negative height means the
+  // rows are stored top-down), little-endian.
+  if (has(26) && bytes[0] === 0x42 && bytes[1] === 0x4d)
+    return {
+      width: Math.abs(view.getInt32(18, true)),
+      height: Math.abs(view.getInt32(22, true)),
+    };
+  // WebP: a RIFF container whose fourth chunk id says how the canvas is described.
+  if (
+    has(16) &&
+    bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 &&
+    bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50
+  ) {
+    const chunk = String.fromCharCode(bytes[12], bytes[13], bytes[14], bytes[15]);
+    if (chunk === "VP8X" && has(30))
+      return {
+        width: 1 + (bytes[24] | (bytes[25] << 8) | (bytes[26] << 16)),
+        height: 1 + (bytes[27] | (bytes[28] << 8) | (bytes[29] << 16)),
+      };
+    if (chunk === "VP8L" && has(25)) {
+      const bits = view.getUint32(21, true);
+      return { width: (bits & 0x3fff) + 1, height: ((bits >> 14) & 0x3fff) + 1 };
+    }
+    if (chunk === "VP8 " && has(30))
+      return {
+        width: view.getUint16(26, true) & 0x3fff,
+        height: view.getUint16(28, true) & 0x3fff,
+      };
+  }
+  // JPEG: skip the segment chain to the first Start-Of-Frame, the only segment
+  // that carries the dimensions.
+  if (has(4) && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 9 <= bytes.length) {
+      if (bytes[offset] !== 0xff) {
+        offset++;
+        continue;
+      }
+      const marker = bytes[offset + 1];
+      // Standalone markers carry no length field.
+      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd9)) {
+        offset += 2;
+        continue;
+      }
+      const length = (bytes[offset + 2] << 8) | bytes[offset + 3];
+      // SOF0–SOF15, excluding DHT (C4), JPG (C8) and DAC (CC).
+      if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc)
+        return {
+          height: (bytes[offset + 5] << 8) | bytes[offset + 6],
+          width: (bytes[offset + 7] << 8) | bytes[offset + 8],
+        };
+      if (length < 2) break;
+      offset += 2 + length;
+    }
+  }
+  return undefined;
 }
 
 function paintCover(
@@ -93,6 +197,82 @@ function paintCover(
   );
 }
 
+/** Decoded size of a retained thumbnail, which is what the budget bounds. */
+const footprint = (image: CoverImage) =>
+  Math.max(1, image.source.width) * Math.max(1, image.source.height) * 4;
+
+/** An ImageBitmap holds memory outside the JS heap and has to be released. */
+function releaseImage(image: CoverImage) {
+  const source = image.source;
+  if (typeof ImageBitmap !== "undefined" && source instanceof ImageBitmap) source.close();
+}
+
+/**
+ * A thumbnail cache bounded by decoded bytes.
+ *
+ * Eviction drops the reference rather than closing the bitmap: a bitmap already
+ * handed to a caller may be mid-paint, and closing it there would throw inside
+ * `drawImage`. Every hard release — a library refresh, a disposal — does close,
+ * so nothing outlives the atlas for long.
+ */
+class ThumbnailCache {
+  private readonly ready = new Map<string, CoverImage>();
+  private readonly pending = new Map<string, Promise<CoverImage | undefined>>();
+  private bytes = 0;
+  private readonly budget: number;
+
+  // An explicit field rather than a parameter property: Node's strip-only
+  // TypeScript loader, which the check scripts run under, rejects the shorthand.
+  constructor(budget: number) {
+    this.budget = budget;
+  }
+
+  /** True once a decode has been started, whether or not it has resolved. */
+  has(url: string) {
+    return this.pending.has(url);
+  }
+
+  peek(url: string) {
+    return this.ready.get(url);
+  }
+
+  load(url: string, decode: (url: string) => Promise<CoverImage | undefined>) {
+    const inFlight = this.pending.get(url);
+    if (inFlight) return inFlight;
+    const promise = decode(url).then((image) => {
+      if (image) this.retain(url, image);
+      return image;
+    });
+    this.pending.set(url, promise);
+    return promise;
+  }
+
+  private retain(url: string, image: CoverImage) {
+    const previous = this.ready.get(url);
+    if (previous) this.bytes -= footprint(previous);
+    this.ready.set(url, image);
+    this.bytes += footprint(image);
+    while (this.bytes > this.budget && this.ready.size > 1) {
+      const oldest = this.ready.keys().next().value;
+      if (oldest === undefined) break;
+      const dropped = this.ready.get(oldest)!;
+      this.ready.delete(oldest);
+      this.bytes -= footprint(dropped);
+    }
+  }
+
+  clear() {
+    for (const image of this.ready.values()) releaseImage(image);
+    this.ready.clear();
+    this.pending.clear();
+    this.bytes = 0;
+  }
+
+  get decodedBytes() {
+    return this.bytes;
+  }
+}
+
 /**
  * Where a tile's rows land in the atlas texture, for a sub-rectangle upload.
  *
@@ -114,6 +294,12 @@ export function atlasSubRectY(textureHeight: number, blockHeight: number, canvas
   return textureHeight - blockHeight - canvasY;
 }
 
+/** One recycled snapshot surface: a canvas and the texture that mirrors it. */
+interface SnapshotSurface {
+  canvas: HTMLCanvasElement;
+  texture: THREE.CanvasTexture;
+}
+
 /** One fixed-size atlas for the visible pool, regardless of total library size. */
 export class CoverAtlas {
   readonly array: THREE.InstancedMesh;
@@ -123,10 +309,9 @@ export class CoverAtlas {
   private readonly tileCanvas = document.createElement("canvas");
   private atlas: THREE.CanvasTexture;
   private readonly selectedTexture: THREE.CanvasTexture;
-  private readonly images = new Map<string, Promise<CoverImage | undefined>>();
-  // Mirror of images' resolved values: a tile that already owns its artwork can
-  // paint once instead of flashing the placeholder and repainting on arrival.
-  private readonly resolved = new Map<string, CoverImage>();
+  /** Thumbnails sized to a tile, and the larger ones the detail view needs. */
+  private readonly tiles = new ThumbnailCache(TILE_CACHE_BYTES);
+  private readonly details = new ThumbnailCache(DETAIL_CACHE_BYTES);
   private readonly slotKeys: (string | undefined)[];
   // Tiles are keyed by album, not by pool slot. The pool shows one album in many
   // positions, and a slot-keyed atlas had to repaint and re-upload most of its
@@ -149,6 +334,11 @@ export class CoverAtlas {
   private rows: number;
   private readonly tileWidth: number;
   private readonly tileHeight: number;
+  /**
+   * The pixel size a tile's artwork actually occupies once the UV margin is
+   * taken out, so a thumbnail is never decoded larger than it can be shown.
+   */
+  private readonly tileSource: number;
   // Slot count (the display pool) and the rows each lane spans, kept apart from
   // the tile count so the atlas can be sized to the albums actually reachable.
   private readonly slotCount: number;
@@ -156,6 +346,15 @@ export class CoverAtlas {
   private readonly atlasAnisotropy: number;
   /** Set by the scene; without it the atlas can only be re-uploaded whole. */
   private renderer?: THREE.WebGLRenderer;
+  /** The surfaces handed out by snapshot(), recycled instead of reallocated. */
+  private readonly snapshotFree: SnapshotSurface[] = [];
+  /** Idle prefetch state; see prefetch(). */
+  private prefetchQueue: string[] = [];
+  private prefetchHandle = 0;
+  private prefetchIdle = false;
+  /** Single-flight detail decode; see select(). */
+  private detailBusy = false;
+  private pendingDetail: { record: ArchiveRecord | undefined; resolve: () => void } | null = null;
 
   constructor(
     count: number,
@@ -177,6 +376,7 @@ export class CoverAtlas {
       Math.floor(maxTextureSize / this.rows),
     );
     this.tileHeight = this.tileWidth;
+    this.tileSource = Math.max(1, Math.ceil(this.tileWidth / (1 - COVER_INSET * 2)));
     this.atlasCanvas.width = this.columns * this.tileWidth;
     this.atlasCanvas.height = this.rows * this.tileHeight;
     this.tileCanvas.width = this.tileWidth;
@@ -247,6 +447,24 @@ export class CoverAtlas {
     this.selected.visible = false;
     this.selected.name = "Selected album cover";
     this.selected.receiveShadow = true;
+  }
+
+  /**
+   * Decode sizes and retained bytes, for the diagnostics readout.
+   *
+   * Exposed rather than merely commented because the claim "the tile tier decodes
+   * sixteen times fewer pixels" is exactly the kind of statement that silently
+   * stops being true after a refactor.
+   */
+  get cacheInfo() {
+    return {
+      tileWidth: this.tileWidth,
+      tileSource: this.tileSource,
+      detailSource: DETAIL_THUMBNAIL,
+      tileBudget: TILE_CACHE_BYTES,
+      detailBudget: DETAIL_CACHE_BYTES,
+      decodedBytes: this.tiles.decodedBytes + this.details.decodedBytes,
+    };
   }
 
   /**
@@ -357,55 +575,71 @@ export class CoverAtlas {
     material.needsUpdate = true;
   }
 
-  private loadImage(url?: string) {
-    if (!url) return Promise.resolve(undefined);
-    let pending = this.images.get(url);
-    if (!pending) {
-      pending = this.decodeThumbnail(url).then((image) => {
-        if (image) this.resolved.set(url, image);
-        return image;
-      });
-      this.images.set(url, pending);
-      if (this.images.size > IMAGE_CACHE_LIMIT)
-        this.images.delete(this.images.keys().next().value!);
-    }
-    return pending;
+  private loadTile(url?: string) {
+    if (!url) return Promise.resolve<CoverImage | undefined>(undefined);
+    return this.tiles.load(url, (target) => this.decode(target, this.tileSource));
+  }
+
+  private loadDetail(url?: string) {
+    if (!url) return Promise.resolve<CoverImage | undefined>(undefined);
+    return this.details.load(url, (target) => this.decode(target, DETAIL_THUMBNAIL));
   }
 
   /**
-   * Decode and downscale off the main thread.
+   * Decode one cover, downscaled to at most `max` on its longer side.
    *
-   * Scaling a multi-megapixel cover down to a thumbnail inside drawImage() blocks
-   * the main thread for milliseconds per cover; a lane switch asks for a whole
-   * column of new covers at once, so that work landed as one burst exactly when
-   * the camera started moving. createImageBitmap does the resize on a worker
-   * thread, leaving the main thread only the small tile paint. The <img> path
-   * remains as a fallback for sources fetch() cannot read.
+   * Two properties matter here. First, the size is read from the header, so the
+   * decoder can be asked for the final dimensions in one pass — the previous
+   * code decoded the blob once to measure, then called `createImageBitmap` on
+   * the *blob* again, parsing the JPEG a second time and building the full-size
+   * bitmap on the way. Second, when the header is unreadable the resample is
+   * taken from the decoded bitmap rather than from the blob, which is a resample
+   * instead of a second decode.
+   *
+   * The resize itself still runs on the browser's image threads: scaling inside
+   * `drawImage` would block the main thread for milliseconds per cover, and a
+   * lane switch asks for a whole shelf at once.
    */
-  private async decodeThumbnail(url: string): Promise<CoverImage | undefined> {
+  private async decode(url: string, max: number): Promise<CoverImage | undefined> {
     try {
       const response = await fetch(url, { credentials: "omit" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const blob = await response.blob();
-      const bitmap = await createImageBitmap(blob);
-      const width = bitmap.width,
-        height = bitmap.height;
-      const scale = Math.min(1, MAX_THUMBNAIL / Math.max(width, height));
-      if (scale >= 1) return { source: bitmap, width, height };
-      const resized = await createImageBitmap(blob, {
+      // 64 kB covers every header parsed here, and every offset any of them uses.
+      const head = new Uint8Array(await blob.slice(0, 65536).arrayBuffer());
+      const size = imageSizeFromHeader(head);
+      if (size) {
+        const scale = Math.min(1, max / Math.max(size.width, size.height));
+        if (scale >= 1) {
+          const bitmap = await createImageBitmap(blob);
+          return { source: bitmap, width: bitmap.width, height: bitmap.height };
+        }
+        const bitmap = await createImageBitmap(blob, {
+          resizeWidth: Math.max(1, Math.round(size.width * scale)),
+          resizeHeight: Math.max(1, Math.round(size.height * scale)),
+          resizeQuality: "high",
+        });
+        return { source: bitmap, width: size.width, height: size.height };
+      }
+      const full = await createImageBitmap(blob);
+      const width = full.width,
+        height = full.height;
+      const scale = Math.min(1, max / Math.max(width, height));
+      if (scale >= 1) return { source: full, width, height };
+      const resized = await createImageBitmap(full, {
         resizeWidth: Math.max(1, Math.round(width * scale)),
         resizeHeight: Math.max(1, Math.round(height * scale)),
         resizeQuality: "high",
       });
-      bitmap.close();
+      full.close();
       return { source: resized, width, height };
     } catch {
-      return this.decodeThumbnailWithImageElement(url);
+      return this.decodeWithImageElement(url, max);
     }
   }
 
   /** Fallback for cover sources that fetch() cannot read (e.g. cross-origin). */
-  private async decodeThumbnailWithImageElement(url: string): Promise<CoverImage | undefined> {
+  private async decodeWithImageElement(url: string, max: number): Promise<CoverImage | undefined> {
     try {
       const image = new Image();
       image.crossOrigin = "anonymous";
@@ -414,7 +648,7 @@ export class CoverAtlas {
       // Retain bounded thumbnails, not decoded multi-megapixel source art.
       const width = image.naturalWidth,
         height = image.naturalHeight;
-      const scale = Math.min(1, MAX_THUMBNAIL / Math.max(width, height));
+      const scale = Math.min(1, max / Math.max(width, height));
       const source = document.createElement("canvas");
       source.width = Math.max(1, Math.round(width * scale));
       source.height = Math.max(1, Math.round(height * scale));
@@ -426,6 +660,80 @@ export class CoverAtlas {
     } catch {
       return undefined;
     }
+  }
+
+  /**
+   * Warm the shelf's thumbnails while nothing is happening.
+   *
+   * The expensive case is the *first* visit to a genre: none of its albums have
+   * a tile yet, so the whole shelf decodes in the moment the camera starts
+   * moving. Every one of those decodes is cheaper than before, but it is still
+   * work landing in the worst possible frame. Doing it up front, one image per
+   * idle slot, moves it to a time when the user is not asking for anything — and
+   * because the pool can hold every album in the library, a warmed thumbnail is
+   * never evicted in practice.
+   *
+   * Deliberately serial: this is filler, and two concurrent decodes would
+   * compete with whatever the next gesture needs.
+   */
+  prefetch(records: ArchiveRecord[]) {
+    const queued = new Set<string>();
+    const next: string[] = [];
+    for (const record of records) {
+      const url = record?.album?.coverUrl;
+      if (!url || queued.has(url)) continue;
+      queued.add(url);
+      // `has` covers both the decoded and the in-flight case, so a second call
+      // never restarts work the first one already paid for.
+      if (this.tiles.has(url)) continue;
+      next.push(url);
+    }
+    this.cancelPrefetch();
+    this.prefetchQueue = next;
+    // A short delay keeps this clear of the boot sequence, which is the only
+    // other moment that wants the main thread.
+    this.schedulePrefetch(2000);
+  }
+
+  private schedulePrefetch(delay: number) {
+    if (this.disposed || this.prefetchHandle || !this.prefetchQueue.length) return;
+    const pump = () => {
+      this.prefetchHandle = 0;
+      if (this.disposed) return;
+      const url = this.prefetchQueue.shift();
+      if (!url) return;
+      void this.loadTile(url).then(
+        () => this.schedulePrefetch(0),
+        () => this.schedulePrefetch(0),
+      );
+    };
+    const idle = (
+      globalThis as {
+        requestIdleCallback?: (callback: () => void, options?: { timeout: number }) => number;
+      }
+    ).requestIdleCallback;
+    if (delay > 0) {
+      this.prefetchIdle = false;
+      this.prefetchHandle = setTimeout(pump, delay) as unknown as number;
+    } else if (idle) {
+      this.prefetchIdle = true;
+      this.prefetchHandle = idle(pump, { timeout: 1500 });
+    } else {
+      this.prefetchIdle = false;
+      this.prefetchHandle = setTimeout(pump, 90) as unknown as number;
+    }
+  }
+
+  private cancelPrefetch() {
+    if (this.prefetchHandle) {
+      const cancelIdle = (globalThis as { cancelIdleCallback?: (handle: number) => void })
+        .cancelIdleCallback;
+      if (this.prefetchIdle && cancelIdle) cancelIdle(this.prefetchHandle);
+      else clearTimeout(this.prefetchHandle);
+    }
+    this.prefetchHandle = 0;
+    this.prefetchIdle = false;
+    this.prefetchQueue = [];
   }
 
   setSlot(slot: number, record: ArchiveRecord | undefined) {
@@ -503,13 +811,13 @@ export class CoverAtlas {
     // A decoded thumbnail paints straight into the tile: one paint, one upload,
     // and no placeholder frame for artwork the session already holds.
     const url = record?.album?.coverUrl;
-    const ready = url ? this.resolved.get(url) : undefined;
+    const ready = url ? this.tiles.peek(url) : undefined;
     if (ready) {
       draw(ready);
       return;
     }
     draw();
-    void this.loadImage(url).then(draw);
+    void this.loadTile(url).then(draw);
   }
 
   /** Point one instance at a tile, or make it degenerate when there is none. */
@@ -534,49 +842,144 @@ export class CoverAtlas {
 
   async select(record: ArchiveRecord | undefined) {
     this.selectedRecord = record;
-    const generation = this.generation;
     const url = record?.album?.coverUrl;
-    const ready = url ? this.resolved.get(url) : undefined;
+    const ready = url ? this.details.peek(url) : undefined;
     if (ready) {
+      this.cancelPendingDetail();
       paintCover(this.selectedCanvas, record, ready);
       this.selectedTexture.needsUpdate = true;
       return;
     }
+    // The placeholder goes up straight away, so the switch itself never waits
+    // on a decode — the real cover replaces it whenever it lands.
     paintCover(this.selectedCanvas, record);
     this.selectedTexture.needsUpdate = true;
-    const image = await this.loadImage(url);
-    if (
-      this.disposed ||
-      generation !== this.generation ||
-      this.selectedRecord !== record
-    )
-      return;
-    paintCover(this.selectedCanvas, record, image);
-    this.selectedTexture.needsUpdate = true;
+    await this.queueDetail(record);
   }
 
-  snapshot(mesh: THREE.Mesh) {
+  /**
+   * Decode at most one detail cover at a time, keeping only the newest request.
+   *
+   * Holding an arrow key fires one `select` per row, and each one used to start
+   * its own full-size decode — a 4000x4000 cover is 16 MP, or 64 MB once
+   * decoded. Ten rows meant ten of those landing at once, which is exactly the
+   * memory churn behind the "sometimes it stutters, sometimes it doesn't"
+   * report: whether a spike hurt depended on what else had been decoded.
+   *
+   * Only the last cover is still wanted by the time it arrives, so this keeps a
+   * single decode in flight and a single request waiting. Anything in between is
+   * answered immediately and never decoded. A run of any length therefore costs
+   * at most two decodes instead of one per step.
+   */
+  private queueDetail(record: ArchiveRecord | undefined) {
+    if (this.disposed) return Promise.resolve();
+    this.cancelPendingDetail();
+    return new Promise<void>((resolve) => {
+      this.pendingDetail = { record, resolve };
+      if (!this.detailBusy) void this.pumpDetail();
+    });
+  }
+
+  private cancelPendingDetail() {
+    if (!this.pendingDetail) return;
+    const superseded = this.pendingDetail;
+    this.pendingDetail = null;
+    superseded.resolve();
+  }
+
+  private async pumpDetail() {
+    if (this.detailBusy) return;
+    this.detailBusy = true;
+    try {
+      while (this.pendingDetail && !this.disposed) {
+        const request = this.pendingDetail;
+        this.pendingDetail = null;
+        const generation = this.generation;
+        const image = await this.loadDetail(request.record?.album?.coverUrl);
+        // A later step already moved the selection on, or the library was
+        // refreshed underneath: this cover is stale, so it is discarded rather
+        // than painted over the newer one.
+        if (
+          this.disposed ||
+          generation !== this.generation ||
+          this.selectedRecord !== request.record
+        ) {
+          request.resolve();
+          continue;
+        }
+        paintCover(this.selectedCanvas, request.record, image);
+        this.selectedTexture.needsUpdate = true;
+        request.resolve();
+      }
+    } finally {
+      this.detailBusy = false;
+    }
+  }
+
+  /**
+   * Hand out a snapshot surface, reusing a retired one when there is one.
+   *
+   * The outgoing card is a picture of the album the shelf just moved away from;
+   * a card is created on every move and disposed when the shelf returns. Each
+   * one used to allocate a 1024² canvas, a mipmapped `CanvasTexture` and a label
+   * canvas — a fresh ~5 MB upload with mipmap generation, per keystroke.
+   * Recycling the surface keeps the shape of the animation and takes the
+   * allocation out of the keystroke.
+   *
+   * Mipmaps are off and linear filtering on: the card is a screen-facing plane
+   * seen at one size, so the pyramid was pure cost.
+   */
+  private acquireSnapshot(): SnapshotSurface {
+    const recycled = this.snapshotFree.pop();
+    if (recycled) return recycled;
     const canvas = document.createElement("canvas");
-    canvas.width = this.selectedCanvas.width;
-    canvas.height = this.selectedCanvas.height;
-    canvas.getContext("2d")!.drawImage(this.selectedCanvas, 0, 0);
+    canvas.width = COVER_PAINT_SIZE;
+    canvas.height = COVER_PAINT_SIZE;
     const texture = new THREE.CanvasTexture(canvas);
     texture.colorSpace = THREE.SRGBColorSpace;
     texture.anisotropy = this.selectedTexture.anisotropy;
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    return { canvas, texture };
+  }
+
+  snapshot(mesh: THREE.Mesh) {
+    const surface = this.acquireSnapshot();
+    const texture = surface.texture;
+    texture.needsUpdate = true;
     mesh.material = this.selected.material.clone();
     mesh.material.onBeforeCompile = this.selected.material.onBeforeCompile;
     mesh.material.customProgramCacheKey = this.selected.material.customProgramCacheKey;
     (mesh.material as THREE.MeshLambertMaterial).map = texture;
     const record = this.selectedRecord;
     mesh.userData.coverDisposed = false;
-    void this.loadImage(record?.album?.coverUrl).then((image) => {
+    mesh.userData.snapshotSurface = surface;
+    const context = surface.canvas.getContext("2d")!;
+    context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);
+    context.drawImage(this.selectedCanvas, 0, 0);
+    // The outgoing card keeps the art the user was just looking at, so it takes
+    // the larger tier and never the tile-sized one.
+    void this.loadDetail(record?.album?.coverUrl).then((image) => {
       if (mesh.userData.coverDisposed || this.disposed) return;
-      paintCover(canvas, record, image);
+      paintCover(surface.canvas, record, image);
       texture.needsUpdate = true;
     });
   }
 
+  /** Return a retired card's surface to the pool. Safe to call twice. */
+  releaseSnapshot(group: THREE.Object3D) {
+    for (const child of group.children) {
+      const mesh = child as THREE.Mesh;
+      const surface = mesh.userData.snapshotSurface as SnapshotSurface | undefined;
+      if (!surface) continue;
+      mesh.userData.snapshotSurface = undefined;
+      this.snapshotFree.push(surface);
+    }
+  }
+
   reset() {
+    this.cancelPrefetch();
+    this.cancelPendingDetail();
     // A refreshed library can be larger than the one the atlas was sized for.
     this.sizeTo(poolAlbumCapacity(this.poolRows));
     this.generation++;
@@ -590,13 +993,21 @@ export class CoverAtlas {
     (this.tileAttribute.array as Float32Array).fill(0);
     this.tileAttribute.needsUpdate = true;
     this.selectedRecord = undefined;
-    this.images.clear();
-    this.resolved.clear();
+    this.tiles.clear();
+    this.details.clear();
   }
   dispose() {
     this.disposed = true;
-    this.images.clear();
-    this.resolved.clear();
+    this.cancelPrefetch();
+    this.cancelPendingDetail();
+    this.tiles.clear();
+    this.details.clear();
+    for (const surface of this.snapshotFree) {
+      surface.texture.dispose();
+      surface.canvas.width = 0;
+      surface.canvas.height = 0;
+    }
+    this.snapshotFree.length = 0;
     this.atlas.dispose();
     this.selectedTexture.dispose();
     this.array.geometry.dispose();

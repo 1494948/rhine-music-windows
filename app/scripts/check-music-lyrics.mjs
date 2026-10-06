@@ -14,6 +14,8 @@ import {
   parsePlainText,
   parseSyncedText,
   splitChars,
+  splitUnits,
+  unitReveal,
 } from '../src/music-lyrics.ts';
 import { resolveAlbumArchive, albumArchiveMarkup } from '../src/music-archive.ts';
 import { escapeHtml } from '../src/html.ts';
@@ -208,6 +210,113 @@ function assertTimes(actual, expected) {
   // Total width is 1.5, so lighting only the CJK glyph is two thirds.
   assert.ok(Math.abs(karaokeClip(mixed, mixedTimeline, mixedTimeline[0].time) - 2 / 3) < 1e-9);
   assert.equal(karaokeClip(mixed, mixedTimeline, mixedTimeline[1].time), 1);
+}
+
+// ------------------------------------------------------ 逐字单元与逐字进度
+
+{
+  // The unit split is what the pane builds its spans from, and it is the only
+  // thing that decides where a line may wrap. The round trip is therefore the
+  // load-bearing assertion: if the units do not rejoin into the exact original
+  // text, a line would render with a glyph missing or duplicated.
+  const cases = [
+    '甲乙丙',
+    'Hello world',
+    '我想将我的寂寞封闭',
+    'Hello 世界',
+    'a b',
+    ' 前导空格',
+    '尾部空格 ',
+    'Don\'t stop, believing!',
+    '甲a乙bb丙',
+  ];
+  for (const text of cases) {
+    const chars = splitChars(text);
+    const units = splitUnits(chars);
+    assert.equal(units.map((unit) => unit.text).join(''), text, `单元必须拼回原文：${text}`);
+    // Ranges have to tile the glyph array exactly, or `unitReveal` would read
+    // the wrong onsets.
+    let cursor = 0;
+    for (const unit of units) {
+      assert.equal(unit.start, cursor, `${text} 的单元区间必须连续`);
+      assert.ok(unit.end > unit.start, `${text} 出现了空单元`);
+      cursor = unit.end;
+    }
+    assert.equal(cursor, chars.length, `${text} 的单元区间必须覆盖整行`);
+  }
+
+  // Chinese is one unit per glyph; Latin is one unit per word, so an English
+  // word can never be broken across two `inline-block` boxes.
+  assert.deepEqual(
+    splitUnits(splitChars('我想')).map((unit) => unit.text),
+    ['我', '想'],
+  );
+  assert.deepEqual(
+    splitUnits(splitChars('Hello world')).map((unit) => unit.text),
+    ['Hello', ' ', 'world'],
+  );
+  // Punctuation clings to the word it follows rather than becoming its own box.
+  assert.deepEqual(
+    splitUnits(splitChars("Don't stop.")).map((unit) => unit.text),
+    ["Don't", ' ', 'stop.'],
+  );
+  // Whitespace is its own unit, which is what keeps a space's advance width
+  // from being trimmed at the edge of the preceding box.
+  assert.deepEqual(
+    splitUnits(splitChars('a  b')).map((unit) => unit.text),
+    ['a', '  ', 'b'],
+  );
+}
+
+{
+  // Four glyphs, one second apart: 0s, 1s, 2s, 3s.
+  const text = '甲乙丙丁';
+  const chars = splitChars(text);
+  const timeline = chars.map((char, i) => ({ time: i, char }));
+  const units = splitUnits(chars);
+  const at = (time) => unitReveal(units, timeline, time);
+
+  // Nothing is lit before the first onset, everything is lit once past the end.
+  assert.deepEqual(at(-1), [0, 0, 0, 0]);
+  assert.deepEqual(at(0), [0, 0, 0, 0]);
+  assert.deepEqual(at(4), [1, 1, 1, 1]);
+  assert.deepEqual(at(99), [1, 1, 1, 1]);
+  // Halfway through a glyph's own second, that glyph is half filled and the
+  // ones after it have not started.
+  assert.deepEqual(at(0.5), [0.5, 0, 0, 0]);
+  assert.deepEqual(at(2.5), [1, 1, 0.5, 0]);
+
+  // Monotonic per unit: a reveal never runs backwards, which is what lets the
+  // pane skip a write whenever the value is unchanged.
+  let previous = at(0);
+  for (let time = 0; time <= 4; time += 0.05) {
+    const current = at(time);
+    for (let i = 0; i < current.length; i++)
+      assert.ok(current[i] >= previous[i] - 1e-9, '逐字进度不得回退');
+    previous = current;
+  }
+
+  // A Latin word is one unit spanning four glyphs, so it fills across its own
+  // letters instead of snapping when its first letter is reached.
+  const wordChars = splitChars('word');
+  const wordTimeline = wordChars.map((char, i) => ({ time: i * 0.25, char }));
+  const wordUnit = splitUnits(wordChars);
+  assert.equal(wordUnit.length, 1);
+  const mid = unitReveal(wordUnit, wordTimeline, 0.5)[0];
+  assert.ok(mid > 0 && mid < 1, '词组应当在自身区间内连续填充');
+  assert.equal(unitReveal(wordUnit, wordTimeline, 0)[0], 0);
+  assert.equal(unitReveal(wordUnit, wordTimeline, 1.2)[0], 1);
+
+  // A single-glyph line has no successor to read an end from, so the fallback
+  // has to produce a usable interval rather than dividing by zero.
+  const single = unitReveal(splitUnits(splitChars('孤')), [{ time: 5, char: '孤' }], 5);
+  assert.equal(single.length, 1);
+  assert.ok(Number.isFinite(single[0]) && single[0] === 0);
+
+  // Nothing to animate must not throw: the pane calls this before the first
+  // clock tick, when the timeline is still empty.
+  assert.deepEqual(unitReveal([], [], 3), []);
+  assert.deepEqual(unitReveal(splitUnits(splitChars('甲')), [], 3), [1]);
 }
 
 // ------------------------------------------------------------------ 档案面板
@@ -425,6 +534,21 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
     '[data-d="far"]',
     'lyrics-unsynced',
     'reduce-motion',
+    // P2: per-glyph motion, the tier approach and the interlude pulse. Each of
+    // these is a property the pane or the settings module writes; if the
+    // stylesheet stops reading one, the control silently does nothing.
+    'var(--g,',
+    '--ly-unit-lift',
+    '--ly-unit-pop',
+    '--ly-enter',
+    '--ly-active-scale',
+    '--ly-settle',
+    '--ly-dot-period',
+    '.lyric-unit',
+    'lyric-settle',
+    'lyric-float',
+    'interlude-breath',
+    '.music-lyrics.interlude',
   ];
   for (const token of paneTokens)
     assert.ok(switchCss.includes(token), `music-lyrics-switch.css is missing ${token}`);
@@ -454,13 +578,24 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   for (const token of ['lyric-line', 'lyric-main', 'lyric-fill', 'data-d='])
     assert.ok(settingsSource.includes(token), `the preview is missing ${token}`);
   assert.ok(
-    appSource.includes('lyricsMarkup(lyricSettings)'),
+    appSource.includes('lyricsMarkup(lyricSettings'),
     'the settings panel must be mounted in the app shell',
   );
   assert.ok(
     appSource.includes('applyLyricControl('),
     'the settings controls must be wired to the shared input handler',
   );
+  // P3: the panel must also carry the presets, the grouped resets, the JSON
+  // transfer and the preview picker — each is an action the shell dispatches.
+  for (const token of [
+    'lyric-preset',
+    'lyric-group-reset',
+    'lyric-row-reset',
+    'lyric-import',
+    'lyric-export',
+    'data-lyric-preview="follow"',
+  ])
+    assert.ok(appSource.includes(token) || settingsSource.includes(token), `missing P3 wiring: ${token}`);
   const switchTokens = [
     '.detail-switch',
     '.detail-switch-halo',
@@ -489,6 +624,16 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   assert.ok(paneSource.includes('setProperty("--reveal"'));
   assert.ok(paneSource.includes('setProperty("--shift"'));
   assert.ok(paneSource.includes('dataset.d ='));
+  // The per-glyph write is the whole of P2's first item: the pane must actually
+  // set `--g` on both layers, and it must be the *shared* unit split driving it
+  // rather than a second implementation that could drift.
+  assert.ok(paneSource.includes('setProperty("--g"'), '歌词面板没有写入逐字进度 --g');
+  assert.ok(paneSource.includes('splitUnits'), '歌词面板必须使用共享的单元切分');
+  assert.ok(paneSource.includes('unitReveal'), '歌词面板必须使用共享的逐字进度');
+  assert.ok(
+    paneSource.includes('paintUnits'),
+    '歌词面板必须集中在一处写 --g，否则逐帧写入会失控',
+  );
   assert.ok(switchSource.includes('translate3d(-50%'));
 }
 

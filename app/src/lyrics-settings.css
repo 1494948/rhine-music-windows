@@ -62,6 +62,124 @@
   margin-top: 4px;
 }
 
+/* The preview's own controls: pick a song, pick a line, or follow playback. */
+.lyric-preview-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.lyric-preview-bar select {
+  flex: 1;
+  min-width: 0;
+}
+
+.lyric-preview-follow {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Three starting points for the whole module. */
+.lyric-presets {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+
+.lyric-preset {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  padding: 9px 11px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 160ms ease, transform 120ms ease;
+}
+
+.lyric-preset:hover {
+  border-color: var(--accent);
+}
+
+.lyric-preset[aria-pressed="true"] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent) inset;
+}
+
+.lyric-preset strong {
+  font-size: 13px;
+}
+
+.lyric-preset small {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* Grouped controls. */
+.lyric-group {
+  margin: 2px 0 12px;
+}
+
+.lyric-group h4 {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 2px;
+  font-size: 11px;
+  letter-spacing: 1px;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
+/* The per-row reset icon, tucked into the slider cell so it aligns with the
+   colour reset buttons in the same column. */
+.lyric-reset-one {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.lyric-reset-one:hover {
+  color: var(--ink);
+  background: var(--surface);
+}
+
+/* Import / export details. */
+.lyric-transfer {
+  margin-top: 10px;
+}
+
+.lyric-transfer summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.lyric-transfer textarea {
+  margin-top: 8px;
+}
+
+.lyric-transfer .panel-actions {
+  margin-top: 8px;
+}
+
 /* The idle float is part of the preview's job: a still frame cannot show it, so
    the sample keeps animating while the panel is open. */
 @media (prefers-reduced-motion: reduce) {

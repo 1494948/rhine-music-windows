@@ -64,6 +64,7 @@ import {
 } from "./music-archive";
 import {
   EMPTY_LYRICS,
+  findActiveLine,
   parseLyricsPayload,
   type LyricsDocument,
   type LyricsPayload,
@@ -72,12 +73,18 @@ import { LyricsPane, type LyricsPaneTrack } from "./music-lyrics-pane";
 import "./lyrics-settings.css";
 import {
   applyLyricControl,
+  applyLyricPatch,
   applyLyricTokens,
   defaultLyricsSettings,
   loadLyricsSettings,
+  lyricGroupKeys,
+  lyricPresetPatch,
   lyricsMarkup,
   saveLyricsSettings,
+  setLyricPreviewLineCount,
+  setLyricPreviewSample,
   syncLyricsUI,
+  type LyricPreviewTrack,
 } from "./lyrics-settings.ts";
 import { DetailSwitch } from "./music-detail-switch";
 
@@ -482,6 +489,162 @@ async function loadLyrics(trackId: string): Promise<LyricsDocument> {
 }
 let detailIdentity = "",
   pendingDetailFocus = false;
+
+// ---------------------------------------------------------- 歌词预览（设置面板）
+
+/** The tracks the preview can pick from: the album currently open in detail. */
+function previewTracks(): LyricPreviewTrack[] {
+  const album = currentAlbum();
+  return album
+    ? album.tracks.map((track) => ({ id: track.id, title: track.title, artist: track.artist }))
+    : [];
+}
+
+/**
+ * The preview's own lyric document, loaded lazily and cached per track. The
+ * pane has its own loader and cache; this one is separate because the preview
+ * deliberately shows a track the user *isn't* necessarily playing, without
+ * disturbing what the pane is showing.
+ */
+const previewLyrics = new Map<string, LyricsDocument>();
+let previewTrackId = "";
+let previewLine = 0;
+let previewFollow = false;
+let previewClock = 0;
+
+/** Resolves the lyric document for the currently selected preview track. */
+async function previewDocument() {
+  const id = previewTrackId;
+  if (!id) return EMPTY_LYRICS;
+  const cached = previewLyrics.get(id);
+  if (cached) return cached;
+  const document = await loadLyrics(id);
+  previewLyrics.set(id, document);
+  return document;
+}
+
+/** Renders the sample line for `line` of the selected track's document. */
+async function renderPreviewLine(line: number) {
+  const doc = await previewDocument();
+  const lines = doc.lines;
+  const index = Math.max(0, Math.min(line, Math.max(0, lines.length - 1)));
+  const active = lines[index];
+  if (!active) {
+    setLyricPreviewSample("这首歌没有内嵌歌词。", 1);
+    return;
+  }
+  // A frozen mid-line sweep: the pane would compute the real fraction from the
+  // clock, but a still sample just needs a plausible, stable position.
+  const p = doc.synced ? 0.46 : 1;
+  setLyricPreviewSample(
+    active.text,
+    p,
+    lines[index - 1]?.text ?? "",
+    lines[index + 1]?.text ?? "",
+  );
+}
+
+/** Refresh the preview against the current picker state. */
+async function refreshPreviewSample() {
+  const track = document.querySelector<HTMLSelectElement>("#lyric-preview-track");
+  const lineSelect = document.querySelector<HTMLSelectElement>("#lyric-preview-line");
+  previewTrackId = track?.value ?? "";
+  previewLine = lineSelect ? Number(lineSelect.value) : 0;
+  if (!previewTrackId) return;
+  await renderPreviewLine(previewLine);
+}
+
+/** Called when the preview follow toggle flips; mirrors the playing track. */
+async function syncPreviewFollow() {
+  if (!previewFollow) return;
+  const playing = playerState?.currentTrack;
+  const album = currentAlbum();
+  if (playing && album && playing.albumId === album.id) {
+    const track = album.tracks.find((item) => item.id === playing.id);
+    if (track) {
+      const select = document.querySelector<HTMLSelectElement>("#lyric-preview-track");
+      if (select && select.value !== track.id) {
+        select.value = track.id;
+        previewTrackId = track.id;
+        previewLyrics.delete(track.id);
+      }
+      const doc = await previewDocument();
+      const index = findActiveLine(doc, previewClock);
+      const lineSelect = document.querySelector<HTMLSelectElement>("#lyric-preview-line");
+      if (lineSelect && index >= 0) {
+        setLyricPreviewLineCount(doc.lines.length);
+        lineSelect.value = String(index);
+      }
+      if (index >= 0) await renderPreviewLine(index);
+    }
+  }
+}
+
+/** Wired once; the preview is only active while the panel is open. */
+async function initPreviewControls() {
+  const track = document.querySelector<HTMLSelectElement>("#lyric-preview-track");
+  const lineSelect = document.querySelector<HTMLSelectElement>("#lyric-preview-line");
+  const follow = document.querySelector<HTMLInputElement>("[data-lyric-preview='follow']");
+  // The player already publishes a clock for the pane; the preview piggybacks
+  // on it rather than running a second timer.
+  if (track && lineSelect && follow) {
+    // Reflect the toggle's last state; the markup rebuilds it unchecked.
+    follow.checked = previewFollow;
+    // Populate the line picker for the initial track once.
+    previewTrackId = track.value;
+    if (previewTrackId) {
+      const doc = await previewDocument();
+      setLyricPreviewLineCount(doc.lines.length);
+      await renderPreviewLine(previewLine);
+    }
+  }
+}
+
+/** One place every lyric-settings change funnels through: pane, preview, save. */
+function applyLyricSettings() {
+  lyricsPane.setStyle(lyricSettings);
+  syncLyricsUI(lyricSettings);
+  const preview = document.getElementById("lyric-preview");
+  if (preview) applyLyricTokens(preview, lyricSettings);
+  saveLyricsSettings(lyricSettings);
+}
+
+/** Marks the most recently applied preset, if any, on the preset buttons. */
+function markLyricPreset(id: string) {
+  document
+    .querySelectorAll<HTMLButtonElement>("[data-action='lyric-preset']")
+    .forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.preset === id));
+    });
+}
+
+async function exportLyricSettings() {
+  const json = JSON.stringify(lyricSettings, null, 2);
+  const status = document.querySelector("#lyric-transfer-status");
+  try {
+    await navigator.clipboard.writeText(json);
+    if (status) status.textContent = "已复制到剪贴板。";
+  } catch {
+    const textarea = document.querySelector<HTMLTextAreaElement>("#lyric-json");
+    if (textarea) textarea.value = json;
+    if (status) status.textContent = "剪贴板不可用，已写入下方文本框，请手动复制。";
+  }
+}
+
+function importLyricSettings() {
+  const textarea = document.querySelector<HTMLTextAreaElement>("#lyric-json");
+  const status = document.querySelector("#lyric-transfer-status");
+  if (!textarea) return;
+  try {
+    // applyLyricPatch normalizes and clamps, so a hand-edited or partial JSON
+    // can neither store an out-of-range value nor break the next render.
+    Object.assign(lyricSettings, applyLyricPatch(lyricSettings, JSON.parse(textarea.value)));
+    applyLyricSettings();
+    if (status) status.textContent = "已应用。";
+  } catch (error) {
+    if (status) status.textContent = `JSON 无效：${(error as Error).message}`;
+  }
+}
 const trackFocus = new MusicTrackFocus();
 let pendingTrackReveal: { albumId: string; trackId: string } | undefined;
 function cancelTrackReveal() {
@@ -1453,6 +1616,9 @@ player.subscribe((state) => {
   lyricsPane.setClock(
     playing && playing.id === lyricsPane.trackId ? state.currentTime : 0,
   );
+  // The settings preview follows the same clock when its toggle is on.
+  previewClock = state.currentTime;
+  if (previewFollow) void syncPreviewFollow();
   updatePlayingRows();
 });
 
@@ -1649,12 +1815,13 @@ function renderSettingsPanel() {
     ${qualityMarkup(renderQuality)}
     <section class="panel-section"><h3>动效与显示</h3><label class="settings-row"><span>减少动态效果<small>简化镜头、文字加载和页签过渡</small></span><input type="checkbox" id="reduced-motion" ${preferences.reduced ? "checked" : ""}></label><label class="settings-row"><span>空闲时停止绘制<small>2 分钟无操作后暂停三维渲染，移动鼠标或按键立即恢复；省电与降低风扇转速</small></span><input type="checkbox" id="idle-stop" ${preferences.idleStop ? "checked" : ""}></label><label class="settings-row"><span>玻璃雾度<small>100% 为原始质感；调高更朦胧，调低更通透。只影响玻璃外壳</small></span><span class="settings-slider"><input type="range" id="glass-frost" aria-label="玻璃雾度" min="0" max="200" step="5" value="${preferences.glassFrost}"><output id="glass-frost-output">${preferences.glassFrost}%</output></span></label><label class="settings-row"><span>锐化强度<small>0% 关闭。三维画面按较低分辨率渲染再放大，锐化找回局部对比；只作用于三维场景</small></span><span class="settings-slider"><input type="range" id="sharpen" aria-label="锐化强度" min="0" max="100" step="5" value="${preferences.sharpen}"><output id="sharpen-output">${preferences.sharpen}%</output></span></label><button class="text-button" data-action="fullscreen">切换全屏 ↗</button></section>
     <section class="panel-section"><h3>声音</h3><label class="settings-row"><span>歌曲音量</span><input type="range" id="volume" aria-label="歌曲音量" min="0" max="100" value="${Math.round(preferences.volume * 100)}"></label><label class="settings-row"><span>切歌淡入淡出<small>当前歌曲先淡出，再淡入下一首</small></span><input type="checkbox" id="song-fade-setting" ${preferences.songFade ? "checked" : ""}></label><label class="settings-row"><span>界面音效<small>玻璃卡片与终端操作</small></span><input type="checkbox" id="sound-setting" ${preferences.sound ? "checked" : ""}></label><label class="settings-row"><span>音效音量</span><input type="range" id="sound-volume" aria-label="音效音量" min="0" max="100" value="${Math.round(preferences.soundVolume * 100)}"></label><label class="settings-row"><span>氛围 BGM<small>专辑开始前淡出，停止后淡入</small></span><input type="checkbox" id="bgm-setting" ${preferences.bgm ? "checked" : ""}></label><label class="settings-row"><span>BGM 音量</span><input type="range" id="bgm-volume" aria-label="BGM 音量" min="0" max="100" value="${Math.round(preferences.bgmVolume * 100)}"></label><button class="text-button" data-action="sound-preview">试听界面音效 ↗</button></section>
-    ${lyricsMarkup(lyricSettings)}
+    ${lyricsMarkup(lyricSettings, previewTracks())}
     ${nativeKernelMarkup()}
     <section class="panel-section"><h3>开发与资源</h3><p>音乐适配与维护：<a href="https://github.com/RonaldDeng/Rhine-Music-Demo" target="_blank" rel="noopener">RonaldDeng ↗</a><br>原版界面：<a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener">LBEILC / RhineLabUI ↗</a></p><p><a href="/licenses/project-mit.txt" target="_blank" rel="noopener">代码 MIT 许可 ↗</a> · <a href="https://github.com/RonaldDeng/Rhine-Music-Demo/blob/v0.2.0/NOTICE.md" target="_blank" rel="noopener">版权与资源说明 ↗</a></p><a href="/?original=1&scene=archive" target="_blank" rel="noopener">打开原版档案界面 ↗</a><p><a href="/fonts/MiSans-license.pdf" target="_blank" rel="noopener">MiSans 字体许可 ↗</a></p></section>`;
   updateQuality();
   updateIntroductionStatus();
   syncLyricsUI(lyricSettings);
+  void initPreviewControls();
   void refreshAudioDeviceList();
 }
 function updateQuality() {
@@ -1901,9 +2068,8 @@ document.addEventListener("click", (e) => {
       break;
     case "lyric-reset":
       Object.assign(lyricSettings, defaultLyricsSettings);
-      lyricsPane.setStyle(lyricSettings);
-      syncLyricsUI(lyricSettings);
-      saveLyricsSettings(lyricSettings);
+      applyLyricSettings();
+      markLyricPreset("");
       notify("歌词参数已恢复默认。");
       break;
     case "lyric-color-reset":
@@ -1911,9 +2077,48 @@ document.addEventListener("click", (e) => {
       // property is removed and the stylesheet fallback takes over again.
       if (target.dataset.lyricKey === "accent") lyricSettings.accent = "";
       else lyricSettings.color = "";
-      lyricsPane.setStyle(lyricSettings);
-      syncLyricsUI(lyricSettings);
-      saveLyricsSettings(lyricSettings);
+      applyLyricSettings();
+      break;
+    case "lyric-preset": {
+      // A preset is a full look, not a delta: it starts from the defaults so it
+      // is deterministic no matter what the user had dialled in before.
+      Object.assign(
+        lyricSettings,
+        applyLyricPatch(lyricSettings, {
+          ...defaultLyricsSettings,
+          ...lyricPresetPatch(target.dataset.preset ?? ""),
+        }),
+      );
+      applyLyricSettings();
+      markLyricPreset(target.dataset.preset ?? "");
+      break;
+    }
+    case "lyric-group-reset": {
+      const patch: Partial<typeof lyricSettings> = {};
+      for (const key of lyricGroupKeys(target.dataset.lyricGroup ?? "")) {
+        (patch as Record<string, unknown>)[key] =
+          defaultLyricsSettings[key as keyof typeof lyricSettings];
+      }
+      Object.assign(lyricSettings, applyLyricPatch(lyricSettings, patch));
+      applyLyricSettings();
+      break;
+    }
+    case "lyric-row-reset": {
+      const key = target.dataset.lyricRow as keyof typeof lyricSettings;
+      if (key && key in defaultLyricsSettings) {
+        Object.assign(
+          lyricSettings,
+          applyLyricPatch(lyricSettings, { [key]: defaultLyricsSettings[key] }),
+        );
+        applyLyricSettings();
+      }
+      break;
+    }
+    case "lyric-export":
+      void exportLyricSettings();
+      break;
+    case "lyric-import":
+      void importLyricSettings();
       break;
     case "save-online":
       void (async () => {
@@ -1958,12 +2163,7 @@ document.addEventListener("input", (e) => {
   // live feedback; the pane and the in-panel preview are re-tokened together so
   // the sample can never disagree with what will play.
   if (el.dataset.lyric || el.dataset.lyricColor) {
-    if (applyLyricControl(el, lyricSettings)) {
-      lyricsPane.setStyle(lyricSettings);
-      const preview = document.getElementById("lyric-preview");
-      if (preview) applyLyricTokens(preview, lyricSettings);
-      saveLyricsSettings(lyricSettings);
-    }
+    if (applyLyricControl(el, lyricSettings)) applyLyricSettings();
   }
   if (el.dataset.quality && el.type === "range") {
     renderQuality = normalizeQuality({
@@ -2010,6 +2210,29 @@ document.addEventListener("input", (e) => {
 });
 document.addEventListener("change", (e) => {
   const el = e.target as HTMLInputElement;
+  // The lyric preview picker: changing the song reloads its lines; changing the
+  // line or the follow toggle just re-renders the sample.
+  if (el.dataset.lyricPreview === "track") {
+    previewTrackId = el.value;
+    previewLine = 0;
+    previewLyrics.delete(el.value);
+    void (async () => {
+      const document = await previewDocument();
+      setLyricPreviewLineCount(document.lines.length);
+      await renderPreviewLine(0);
+    })();
+    return;
+  }
+  if (el.dataset.lyricPreview === "line") {
+    previewLine = Number(el.value);
+    void renderPreviewLine(previewLine);
+    return;
+  }
+  if (el.dataset.lyricPreview === "follow") {
+    previewFollow = el.checked;
+    if (previewFollow) void syncPreviewFollow();
+    return;
+  }
   if (el.id === "music-sort" && ["genre", "artist", "album"].includes(el.value)) {
     if (preferences.sortMode === el.value) return;
     preferences.sortMode = el.value as MusicSortMode;

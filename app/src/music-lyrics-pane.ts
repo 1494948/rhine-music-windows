@@ -3,9 +3,13 @@ import {
   charTimeline,
   findActiveLine,
   karaokeClip,
+  lineEndTime,
   splitChars,
+  splitUnits,
+  unitReveal,
   type LyricsChar,
   type LyricsDocument,
+  type LyricsUnit,
 } from "./music-lyrics.ts";
 import { applyLyricTokens, type LyricsSettings } from "./lyrics-settings.ts";
 
@@ -86,6 +90,25 @@ export class LyricsPane {
   private blurScale = 1;
   /** Lyric offset against the audio clock, in seconds. */
   private delay = 0;
+  /** Longest gap that still reads as "lyrics are coming"; beyond it, dots. */
+  private interludeGap = 6;
+  private interludeOn = false;
+  /**
+   * The active line, decomposed into per-unit spans.
+   *
+   * Only the singing line is decomposed: the other fifty-nine lines in the
+   * window stay a single text node each, so the DOM cost is one line's worth of
+   * spans rather than a document's. `unitOwner` is what keeps a re-apply of the
+   * settings (which re-enters markActive) from rebuilding spans the line
+   * already has — a rebuild would reset every `--g` to 0 and the line would
+   * visibly re-settle on a settings change.
+   */
+  private unitOwner?: HTMLElement;
+  private units: LyricsUnit[] = [];
+  private unitMain: HTMLElement[] = [];
+  private unitFill: HTMLElement[] = [];
+  /** Last `--g` written per unit, so a frame only writes what actually moved. */
+  private unitLast: number[] = [];
 
   constructor(host: HTMLElement, options: LyricsPaneOptions) {
     this.options = options;
@@ -95,7 +118,8 @@ export class LyricsPane {
     element.hidden = true;
     element.setAttribute("aria-label", "歌词");
     element.innerHTML = `<div class="lyrics-head"><small>LYRICS <i>／</i> 歌词</small><span class="lyrics-credit"></span></div>
-      <div class="lyrics-viewport"><div class="lyrics-track-line"></div></div>
+      <div class="lyrics-viewport"><div class="lyrics-track-line"></div>
+        <div class="lyric-interlude" aria-hidden="true"><i></i><i></i><i></i></div></div>
       <p class="lyrics-note" role="status"></p>`;
     host.append(element);
     this.element = element;
@@ -221,6 +245,12 @@ export class LyricsPane {
     this.windowCount = count;
     this.nodes.clear();
     this.activeNode = undefined;
+    // The nodes these arrays point at are about to be discarded.
+    this.unitOwner = undefined;
+    this.units = [];
+    this.unitMain = [];
+    this.unitFill = [];
+    this.unitLast = [];
     const fragment = document.createDocumentFragment();
     for (let index = start; index < start + count; index++) {
       const line = this.lyrics.lines[index];
@@ -317,6 +347,7 @@ export class LyricsPane {
     this.track.style.setProperty("--line-h", `${this.pitch}px`);
     this.delay = settings.delayMs / 1000;
     this.blurScale = settings.blur;
+    this.interludeGap = settings.interludeGap;
     this.measure();
     if (this.ready) this.markActive(this.activeIndex);
   }
@@ -336,6 +367,12 @@ export class LyricsPane {
     this.track.textContent = "";
     this.headLabel.textContent = "";
     this.setNote("");
+    this.unitOwner = undefined;
+    this.units = [];
+    this.unitMain = [];
+    this.unitFill = [];
+    this.unitLast = [];
+    this.setInterlude(false);
   }
 
   dispose() {
@@ -363,6 +400,7 @@ export class LyricsPane {
       )) this.mountWindow(index);
       this.markActive(index);
     }
+    this.trackInterlude(index);
     const line = index < 0 ? 0 : index;
     const target = this.viewportHeight * 0.5 - (line * this.pitch + this.pitch / 2);
     if (this.reduced) {
@@ -383,6 +421,26 @@ export class LyricsPane {
     }
     this.track.style.setProperty("--shift", `${this.shift.toFixed(2)}px`);
     this.paintKaraoke(index);
+  }
+
+  /**
+   * Decides whether the pane is waiting out an instrumental stretch.
+   *
+   * The waiting state is "the line has finished being sung and the next one is
+   * still far away", not "the line started a while ago": the sweep is capped at
+   * twelve seconds precisely so a long gap does not hold a line on screen, and
+   * hanging the dots off the line's onset would put them up while it is still
+   * being sung.
+   */
+  private trackInterlude(index: number) {
+    const next = index < 0 ? this.lyrics.lines[0] : this.lyrics.lines[index + 1];
+    this.setInterlude(
+      this.lyrics.synced &&
+        this.interludeGap > 0 &&
+        !!next &&
+        (index < 0 || this.clock >= lineEndTime(this.lyrics, index)) &&
+        next.time - this.clock > this.interludeGap,
+    );
   }
 
   /** Class changes are batched to the moment the active line actually changes. */
@@ -416,9 +474,67 @@ export class LyricsPane {
               : "none";
       node.style.setProperty("--blur", blur);
       node.style.setProperty("--p", "0");
-      if (own === index) this.activeNode = node;
+      if (own === index) {
+        this.activeNode = node;
+        this.decompose(node);
+      }
     }
     this.activeIndex = index;
+  }
+
+  /**
+   * Splits the singing line into one span per unit, mirrored across both layers.
+   *
+   * Both copies have to carry the same `--g`: the accent layer is a second copy
+   * of the same text positioned over the base one, so a per-unit offset applied
+   * to only one of them would tear the two apart and show as a ghost.
+   *
+   * The spans are `inline-block` and move by `transform` alone. That is
+   * deliberate — animating `font-weight` or `letter-spacing` would change the
+   * glyph raster and force a re-shape every frame, which is exactly what the
+   * transforms avoid.
+   */
+  private decompose(node: HTMLElement) {
+    if (this.unitOwner === node && this.units.length) return;
+    this.unitOwner = node;
+    this.units = [];
+    this.unitMain = [];
+    this.unitFill = [];
+    this.unitLast = [];
+    const main = node.querySelector<HTMLElement>(".lyric-main");
+    const fill = node.querySelector<HTMLElement>(".lyric-fill");
+    if (!main || !fill || !this.glyphs.length) return;
+    const units = splitUnits(this.glyphs);
+    // The units go inside one wrapper per layer rather than straight into it:
+    // the accent layer is a `flex` box, and a flex box makes every child its own
+    // flex item, which would lay the line out as a single unwrappable row. One
+    // block-level item per layer keeps the wrapping identical to the base layer's.
+    const base = document.createElement("span");
+    base.className = "lyric-units";
+    const accent = document.createElement("span");
+    accent.className = "lyric-units";
+    accent.setAttribute("aria-hidden", "true");
+    for (const unit of units) {
+      for (const [parent, list] of [
+        [base, this.unitMain],
+        [accent, this.unitFill],
+      ] as const) {
+        const span = document.createElement("span");
+        span.className = "lyric-unit";
+        // 0 rather than 1: the line has only just started, and the units settle
+        // into place as they are sung.
+        span.style.setProperty("--g", "0");
+        span.textContent = unit.text;
+        parent.append(span);
+        list.push(span);
+      }
+      this.unitLast.push(-1);
+    }
+    main.textContent = "";
+    fill.textContent = "";
+    main.append(base);
+    fill.append(accent);
+    this.units = units;
   }
 
   private paintKaraoke(index: number) {
@@ -428,10 +544,47 @@ export class LyricsPane {
     // the pane still works as a plain text view.
     if (!this.lyrics.synced || !this.glyphs.length || !this.timeline.length) {
       node.style.setProperty("--p", "1");
+      this.paintUnits(true);
       return;
     }
     // The line's own duration no longer feeds a second readout: the sweep's soft
     // edge is the whole indicator, so only the clip fraction is written.
     node.style.setProperty("--p", karaokeClip(this.glyphs, this.timeline, this.clock).toFixed(4));
+    this.paintUnits();
+  }
+
+  /**
+   * Writes `--g` on the units whose reveal actually moved this frame.
+   *
+   * A unit spans at least a whole glyph, so in the steady state one, rarely two
+   * units change between two frames. Comparing against the last written value
+   * turns "one write per unit per frame" into "one write per unit per glyph",
+   * which is what makes a per-glyph animation affordable at all.
+   */
+  private paintUnits(sung = false) {
+    const { units } = this;
+    if (!units.length) return;
+    const values =
+      sung || this.reduced ? units.map(() => 1) : unitReveal(units, this.timeline, this.clock);
+    for (let index = 0; index < values.length; index++) {
+      if (Math.abs(values[index] - this.unitLast[index]) < 0.008) continue;
+      this.unitLast[index] = values[index];
+      const text = values[index].toFixed(3);
+      this.unitMain[index]?.style.setProperty("--g", text);
+      this.unitFill[index]?.style.setProperty("--g", text);
+    }
+  }
+
+  /**
+   * Shows or hides the interlude dots by class only.
+   *
+   * The breathing itself is a CSS animation with no timeline of its own — the
+   * pane's job is a single boolean that flips once per gap, not a timer per
+   * dot.
+   */
+  private setInterlude(waiting: boolean) {
+    if (waiting === this.interludeOn) return;
+    this.interludeOn = waiting;
+    this.element.classList.toggle("interlude", waiting);
   }
 }

@@ -312,3 +312,65 @@ export function karaokeClip(chars: string[], timeline: LyricsChar[], time: numbe
 export function splitChars(text: string) {
   return [...text];
 }
+
+/**
+ * An animatable slice of a line: one CJK glyph, one Latin word, or one run of
+ * whitespace.
+ *
+ * Latin is grouped into words rather than split per letter, because the pane
+ * renders each unit as an `inline-block` — and a break opportunity appears
+ * between any two of those, which would let an English word wrap mid-word. One
+ * unit per word keeps Latin lyrics wrapping exactly as they did while Chinese
+ * still breaks per glyph, which is how the language is set anyway.
+ */
+export interface LyricsUnit {
+  /** The unit's exact text, so the pane can build it without re-slicing. */
+  text: string;
+  /** Range into the line's glyph array; `end` is exclusive. */
+  start: number;
+  end: number;
+}
+
+const isSpace = (char: string) => /\s/.test(char);
+
+export function splitUnits(chars: string[]): LyricsUnit[] {
+  const units: LyricsUnit[] = [];
+  let index = 0;
+  while (index < chars.length) {
+    const start = index;
+    if (isSpace(chars[index])) {
+      while (index < chars.length && isSpace(chars[index])) index++;
+    } else if (charWidth(chars[index]) >= 1) {
+      index++;
+    } else {
+      // A word: everything until the next gap or CJK glyph, punctuation included.
+      while (index < chars.length && !isSpace(chars[index]) && charWidth(chars[index]) < 1) index++;
+    }
+    units.push({ text: chars.slice(start, index).join(""), start, end: index });
+  }
+  return units;
+}
+
+/**
+ * Per-unit reveal, 0 before a unit is reached and 1 once it is sung through.
+ *
+ * This is the per-glyph counterpart of `karaokeClip`. A unit fills across its
+ * own interval rather than stepping when its first glyph is reached, so a Latin
+ * word sweeps through its letters and a Chinese glyph fills edge to edge. The
+ * unit's end is the next glyph's onset; the last unit has no successor to read,
+ * so it reuses the line's average step.
+ */
+export function unitReveal(units: LyricsUnit[], timeline: LyricsChar[], time: number): number[] {
+  if (!units.length || !timeline.length) return units.map(() => 1);
+  const first = timeline[0].time;
+  const last = timeline[timeline.length - 1].time;
+  const step =
+    timeline.length > 1 ? Math.max(0.05, (last - first) / (timeline.length - 1)) : 0.35;
+  const onset = (index: number) =>
+    timeline[index] ? timeline[index].time : last + step * (index - timeline.length + 1);
+  return units.map((unit) => {
+    const start = onset(unit.start);
+    const end = Math.max(start + 0.05, onset(unit.end));
+    return Math.max(0, Math.min(1, (time - start) / (end - start)));
+  });
+}

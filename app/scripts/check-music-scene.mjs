@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { setMusicAlbums, records, archiveColumns, columnFiles, fileAtSlot, fileLocation } from '../src/data.ts';
 import { fileAtCell, poolAlbumCapacity, selectionCell, visibleCell, cellKey, LOOP_COLUMNS, LOOP_ROWS, MUSIC_LOOP_ROWS, wrap } from '../src/archive-loop.ts';
-import { containCover, atlasSubRectY } from '../src/cover-atlas.ts';
+import { containCover, atlasSubRectY, imageSizeFromHeader } from '../src/cover-atlas.ts';
 
 for (const genreCount of [1, 2, 7]) for (const albumCount of [1, 3, 40]) {
   const genres = Array.from({ length: genreCount }, (_, i) => ({ id: `g${i}`, name: `流派 ${i}` }));
@@ -98,4 +98,100 @@ for (const [width, height] of [[1000, 1000], [600, 1000], [1200, 500]]) {
   assert.equal(atlasSubRectY(512, 256, 0), 256);
   assert.equal(atlasSubRectY(512, 256, 256), 0);
 }
-console.log('Music scene checks passed: 1/2/7 genres × 1/3/40 albums, bidirectional loops, empty library, uncropped image aspect ratios, flipped atlas sub-rect placement.');
+// --- 封面头部读尺寸：不解码就拿到宽高 -----------------------------------------
+//
+// The cover pipeline used to decode every artwork twice: once to learn its
+// dimensions, once more (from the same blob) to resize it, materialising the
+// full 16 MP bitmap on the way to a 256 px tile. Reading the dimensions out of
+// the header is what removes the first decode, so the parsers below are load
+// bearing — a wrong offset would not throw, it would silently resize to the
+// wrong aspect ratio. Synthetic headers keep this verifiable without any image
+// decoder.
+{
+  const ascii = (text) => [...text].map((character) => character.charCodeAt(0));
+  const le = (value, count) =>
+    Array.from({ length: count }, (_, i) => (value >> (8 * i)) & 0xff);
+  const be = (value, count) =>
+    Array.from({ length: count }, (_, i) => (value >> (8 * (count - 1 - i))) & 0xff);
+  const riff = (chunk, payload) => [
+    ...ascii('RIFF'), ...le(0, 4), ...ascii('WEBP'), ...ascii(chunk), ...le(0, 4), ...payload,
+  ];
+  const png = (width, height) => new Uint8Array([
+    0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+    ...be(13, 4), ...ascii('IHDR'), ...be(width, 4), ...be(height, 4), 8, 6, 0, 0, 0,
+  ]);
+  const jpeg = (width, height) => new Uint8Array([
+    0xff, 0xd8,
+    // A segment of its own before the frame: the walk must skip a length-prefixed
+    // segment rather than assume the frame comes first.
+    0xff, 0xe0, ...be(16, 2), ...Array(14).fill(0),
+    0xff, 0xc0, ...be(17, 2), 8, ...be(height, 2), ...be(width, 2),
+    3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0,
+  ]);
+  const gif = (width, height) =>
+    new Uint8Array([...ascii('GIF89a'), ...le(width, 2), ...le(height, 2), 0, 0, 0]);
+  // A real BITMAPFILEHEADER is 14 bytes — `BM`, bfSize, two reserved words and
+  // bfOffBits — and biWidth/biHeight only follow after the 4-byte biSize, so the
+  // dimensions sit at 18 and 22. Writing the header short would move them to 14
+  // and 18 and quietly read the colour depth as the height.
+  const bmp = (width, height) => new Uint8Array([
+    0x42, 0x4d,
+    ...le(54, 4), ...le(0, 2), ...le(0, 2), ...le(54, 4),
+    ...le(40, 4), ...le(width, 4), ...le(height, 4), ...le(1, 2), ...le(24, 2),
+  ]);
+  const webp = {
+    // Each of WebP's three containers describes the canvas differently; all three
+    // appear in the wild and all three are cheap to get wrong.
+    lossy: (width, height) =>
+      new Uint8Array(riff('VP8 ', [0, 0, 0, 0x9d, 0x01, 0x2a, ...le(width, 2), ...le(height, 2)])),
+    lossless: (width, height) =>
+      new Uint8Array(riff('VP8L', [0x2f, ...le(((height - 1) << 14) | (width - 1), 4)])),
+    extended: (width, height) =>
+      new Uint8Array(riff('VP8X', [0, 0, 0, 0, ...le(width - 1, 3), ...le(height - 1, 3)])),
+  };
+
+  for (const [name, bytes, width, height] of [
+    ['PNG', png(1400, 1200), 1400, 1200],
+    ['JPEG', jpeg(4000, 3000), 4000, 3000],
+    ['JPEG 正方形', jpeg(4000, 4000), 4000, 4000],
+    ['GIF', gif(500, 380), 500, 380],
+    ['BMP', bmp(300, 260), 300, 260],
+    ['WebP 有损', webp.lossy(640, 480), 640, 480],
+    ['WebP 无损', webp.lossless(1200, 800), 1200, 800],
+    ['WebP 扩展', webp.extended(2000, 1500), 2000, 1500],
+  ])
+    assert.deepEqual(imageSizeFromHeader(bytes), { width, height }, `${name} 的宽高`);
+  // A negative biHeight means the rows are stored top-down. The magnitude is
+  // the size that matters, so the sign must not leak into the aspect ratio.
+  assert.deepEqual(imageSizeFromHeader(bmp(320, -200)), { width: 320, height: 200 });
+  // An unreadable header must say so rather than guess: the caller has a
+  // decode-based fallback and only takes it when this returns undefined.
+  assert.equal(imageSizeFromHeader(new Uint8Array(0)), undefined);
+  assert.equal(imageSizeFromHeader(new Uint8Array([0x00, 0x01, 0x02, 0x03])), undefined);
+  assert.equal(imageSizeFromHeader(new Uint8Array([0xff, 0xd8, 0xff, 0xc0, 0x00])), undefined);
+  // A JPEG whose frame header sits past the 64 kB slice the caller reads.
+  assert.equal(
+    imageSizeFromHeader(
+      new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0xff, 0xff, ...Array(32).fill(0)]),
+    ),
+    undefined,
+  );
+
+  // The tile tier must ask for exactly what a tile can show. Reproducing the
+  // constructor's arithmetic keeps the claim in cover-atlas.ts honest: the shelf
+  // never pays for the detail-sized decode, and the 1/128 UV inset never clips.
+  for (const [maxTextureSize, tiles] of [[32768, 79], [8192, 79], [4096, 40]]) {
+    const columns = 16;
+    const rows = Math.ceil(tiles / columns);
+    const tileWidth = Math.min(
+      256,
+      Math.floor(maxTextureSize / columns),
+      Math.floor(maxTextureSize / rows),
+    );
+    const source = Math.max(1, Math.ceil(tileWidth / (1 - (1 / 128) * 2)));
+    assert.ok(source < 1024, '瓦片层绝不能请求详情尺寸的解码');
+    assert.ok(source >= tileWidth, '1/128 的 UV 内缩不能被裁掉');
+    assert.ok(source <= tileWidth * 1.02, `瓦片解码 ${source} 比瓦片 ${tileWidth} 大得离谱`);
+  }
+}
+console.log('Music scene checks passed: 1/2/7 genres × 1/3/40 albums, bidirectional loops, empty library, uncropped image aspect ratios, flipped atlas sub-rect placement, cover-header dimensions.');

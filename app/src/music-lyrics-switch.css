@@ -353,6 +353,22 @@
   /* Idle float of the singing line */
   --ly-float: 3px;
   --ly-float-period: 5.4s;
+  /* Per-glyph motion (`--g`). Each unit of the singing line settles into place
+     as it is sung: `--g` runs 0 → 1 and these two read its *remaining* 1 - g,
+     so an unsung unit sits low and a fraction larger and eases home. Scaling one
+     property rather than animating font-weight or letter-spacing is what keeps
+     the glyphs cached — a type-level animation would re-shape the line every
+     frame. Feathered per unit too, via the accent layer's own mask. */
+  --ly-unit-lift: 4px;
+  --ly-unit-pop: 0.03;
+  /* How far a line sits below its resting place while it is still on approach.
+     The four tiers below scale it, so the stack slides up rather than fading in. */
+  --ly-enter: 6px;
+  /* Emphasis on the singing line, and the overshoot it lands with. */
+  --ly-active-scale: 1.035;
+  --ly-settle: 0.05;
+  /* Interlude pulse: the breathing dots shown while a long gap runs out. */
+  --ly-dot-period: 2.4s;
 }
 
 .music-app[data-layout="desktop"] .music-lyrics,
@@ -434,9 +450,16 @@
   filter: var(--blur, none);
   opacity: calc(0.14 * var(--ly-dim, 1));
   scale: 1;
-  translate: 0 0;
+  /* A line rests below its final position until it is close to being sung, and
+     the four tiers below walk it home. That vertical approach is the whole of
+     the enter/exit motion: a new line never appears out of nothing, it rises
+     into the stack while the one it displaces sinks back out of it. */
+  translate: 0 var(--ly-enter, 6px);
   transform-origin: left center;
-  transition: opacity 300ms ease, font-size 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 300ms ease,
+    font-size 420ms cubic-bezier(0.22, 1, 0.36, 1),
+    translate 460ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Four distance tiers from the singing line. The base value is the `far` tier
@@ -448,23 +471,90 @@
 .lyric-line[data-d="mid"] {
   opacity: calc(0.34 * var(--ly-dim, 1));
   --ly-idle-size: 0.95;
+  translate: 0 calc(var(--ly-enter, 6px) * 0.62);
 }
 
 .lyric-line[data-d="near"] {
   opacity: calc(0.62 * var(--ly-dim, 1));
   --ly-idle-size: 0.97;
+  /* 0.28 rather than a third: the singing line's float animation takes the
+     `translate` property over the instant the tier turns over, so whatever
+     offset is left at that boundary steps rather than eases. Keeping it under
+     two pixels keeps that step invisible. */
+  translate: 0 calc(var(--ly-enter, 6px) * 0.28);
 }
 
-/* The singing line: full size, full strength, a hair of scale, and an idle
-   float. The float starts and ends at offset 0, so handing the animation from
-   one line to the next never shows a jump. */
+/* The singing line: full size, full strength, an idle float, and a one-shot
+   overshoot as it takes over. The two animations own different properties —
+   `scale` and `translate` — so they run together without fighting, and the
+   settle stops after a single pass because it is only the *arrival* that should
+   read as springy. `will-change` is scoped to this one line rather than to the
+   whole stack: promoting sixty lines would cost sixty layers to save one. */
 .lyric-line[data-d="0"] {
   opacity: 1;
-  scale: 1.035;
+  scale: var(--ly-active-scale, 1.035);
+  translate: 0 0;
   font-size: var(--ly-size, 17px);
-  animation: lyric-float var(--ly-float-period, 5.4s) ease-in-out infinite;
+  will-change: transform, opacity;
+  animation:
+    lyric-settle 340ms cubic-bezier(0.34, 1.4, 0.64, 1) 1,
+    lyric-float var(--ly-float-period, 5.4s) ease-in-out infinite;
   filter: var(--blur, none)
     drop-shadow(0 0 var(--ly-glow-size, 0px) var(--ly-glow-color, transparent));
+}
+
+/* From 0 to 1 is the singing line settling in: a small undershoot, a small
+   overshoot, then rest. Both ends are expressed as an offset from the tier's
+   own scale, so turning `--ly-settle` down to 0 leaves a plain transition with
+   no keyframe to remove. */
+@keyframes lyric-settle {
+  from {
+    scale: calc(var(--ly-active-scale, 1.035) - var(--ly-settle, 0.05));
+  }
+  62% {
+    scale: calc(var(--ly-active-scale, 1.035) + var(--ly-settle, 0.05));
+  }
+  to {
+    scale: var(--ly-active-scale, 1.035);
+  }
+}
+
+/**
+ * The per-layer wrapper the unit spans live in.
+ *
+ * The accent layer is laid out with `flex` (it needs its own vertical centring,
+ * being absolutely positioned), and a flex box turns every child into a flex
+ * item — which would put the whole line in one unwrappable row. Wrapping the
+ * units in a single block-level item keeps both layers wrapping identically.
+ */
+.lyric-units {
+  display: block;
+  min-width: 0;
+}
+
+.lyric-fill .lyric-units {
+  /* Fills the flex container so the accent copy occupies exactly the base
+     copy's width; anything narrower would wrap one word earlier. */
+  flex: 1;
+}
+
+/**
+ * A single animatable slice of the singing line.
+ *
+ * Every unit carries `--g`, its own reveal from 0 to 1, and both layers hold an
+ * identical copy of the same span so the accent text stays welded to the base
+ * text underneath it. Only `--g` is ever written per frame.
+ */
+.lyric-unit {
+  display: inline-block;
+  /* `pre-wrap` keeps the space a unit may carry — without it the trailing gap
+     of a word would be trimmed at the box edge and the line would run together —
+     while `anywhere` still lets an unbroken Latin word fold if it has to. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  transform-origin: 50% 100%;
+  translate: 0 calc((1 - var(--g, 1)) * var(--ly-unit-lift, 0px));
+  scale: calc(1 + (1 - var(--g, 1)) * var(--ly-unit-pop, 0));
 }
 
 @keyframes lyric-float {
@@ -482,6 +572,7 @@
   opacity: calc(0.76 * var(--ly-dim, 1));
   filter: none;
   scale: 1;
+  translate: 0 0;
   font-size: var(--ly-size, 17px);
   animation: none;
 }
@@ -536,6 +627,62 @@
   border-left: 1px solid var(--line);
 }
 
+/* ---------------------------------------------------------------- 间奏律动 */
+
+/* Three dots that breathe while a long gap runs out. The pane flips one class
+   when the gap opens and closes; the breathing itself is entirely CSS, so there
+   is no timer anywhere and nothing to keep in step with the audio clock. It sits
+   just below the singing line rather than in the middle of the pane, so it reads
+   as "the next line goes here" instead of replacing the current one. */
+.lyric-interlude {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(50% + var(--line-h, 52px) * 0.62);
+  display: flex;
+  justify-content: center;
+  gap: 7px;
+  opacity: 0;
+  transition: opacity 520ms ease;
+  pointer-events: none;
+}
+
+.lyric-interlude i {
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--ly-accent, var(--accent));
+  animation: interlude-breath var(--ly-dot-period, 2.4s) ease-in-out infinite;
+}
+
+/* A third of a period apart each, so the three read as one travelling breath
+   rather than three dots blinking together. */
+.lyric-interlude i:nth-child(2) {
+  animation-delay: calc(var(--ly-dot-period, 2.4s) / 6);
+}
+
+.lyric-interlude i:nth-child(3) {
+  animation-delay: calc(var(--ly-dot-period, 2.4s) / 3);
+}
+
+.music-lyrics.interlude .lyric-interlude {
+  opacity: 0.72;
+}
+
+@keyframes interlude-breath {
+  0%,
+  100% {
+    translate: 0 0;
+    scale: 0.78;
+    opacity: 0.34;
+  }
+  50% {
+    translate: 0 -3px;
+    scale: 1;
+    opacity: 1;
+  }
+}
+
 .lyrics-note[hidden] {
   display: none;
 }
@@ -543,4 +690,12 @@
 .music-lyrics.reduce-motion .lyric-line {
   transition: none;
   animation: none;
+}
+
+/* Reduced motion keeps the dots legible but stops them breathing. The pane also
+   writes every unit straight to `--g: 1`, which parks them at rest instead of
+   at the offset the base rule would otherwise leave them at. */
+.music-lyrics.reduce-motion .lyric-interlude i {
+  animation: none;
+  opacity: 0.5;
 }

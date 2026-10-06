@@ -65,6 +65,16 @@ export const MUSIC_PREVIEW_LIFT = 0.9;
 export const MUSIC_INSPECTION_LIFT = MUSIC_MODEL.height + 0.12;
 const MUSIC_DETAIL_ELEVATION = THREE.MathUtils.degToRad(20);
 const MUSIC_ALBUM_SWITCH_RATE = 9;
+/**
+ * How many outgoing cards may stay in the scene at once. See trimOutgoing().
+ */
+const MUSIC_OUTGOING_LIMIT = 24;
+/** A recycled label surface for an outgoing card; see acquireLabelSurface(). */
+interface CardLabelSurface {
+  canvas: HTMLCanvasElement;
+  texture: THREE.CanvasTexture;
+  material: THREE.MeshBasicMaterial;
+}
 export class ArchiveScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene = new THREE.Scene();
@@ -117,6 +127,8 @@ export class ArchiveScene {
     returnY: number | null;
     clarity: number;
   }[] = [];
+  /** Recycled label surfaces for outgoing cards; see acquireLabelSurface(). */
+  private readonly labelSurfaces: CardLabelSurface[] = [];
   private pulses: { row: number; lane: number; time: number }[] = [];
   private pendingPulse: ArchiveCell | null = null;
   private selectedSlot = 76;
@@ -443,7 +455,13 @@ export class ArchiveScene {
     this.musicPlacement = new MusicPlacementMotion();
     this.musicNavigationLift = false;
     this.targetDetail = this.detail = 0;
-    for (const old of this.outgoing) { this.scene.remove(old.group); this.appearance.dispose(old.group); }
+    for (const old of this.outgoing) {
+      this.scene.remove(old.group);
+      this.appearance.dispose(old.group);
+      // The card's surfaces are recycled rather than dropped; see snapshot().
+      this.covers.releaseSnapshot(old.group);
+      this.releaseLabelSurface(old.group);
+    }
     this.outgoing = [];
     this.covers.reset();
     this.covers.array.visible = musicLibrary && records.length > 0;
@@ -469,6 +487,9 @@ export class ArchiveScene {
     this.laneFocus = { value: location.lane, velocity: 0 };
     this.columnCamera = { value: (location.lane - 2) * COLUMN_SPACING, velocity: 0 };
     await this.covers.select(records[index]);
+    // Warm the shelf's own thumbnails during idle time, so the first visit to a
+    // genre is not the frame that pays for a whole shelf of decodes.
+    if (musicLibrary) this.covers.prefetch(records);
   }
 
   enableSelectionLighting() {
@@ -874,18 +895,13 @@ export class ArchiveScene {
       if (cover) this.covers?.snapshot(cover);
       const label = group.children.find((child) => child.userData.printedLabel) as THREE.Mesh | undefined;
       if (label) {
-        const canvas = document.createElement("canvas");
-        canvas.width = 1024;
-        canvas.height = 440;
-        canvas.getContext("2d")!.drawImage(this.labelCanvas, 0, 0);
-        const map = new THREE.CanvasTexture(canvas);
-        map.colorSpace = THREE.SRGBColorSpace;
-        label.material = new THREE.MeshBasicMaterial({
-          map,
-          toneMapped: false,
-          transparent: true,
-          depthWrite: false,
-        });
+        const surface = this.acquireLabelSurface();
+        const context = surface.canvas.getContext("2d")!;
+        context.clearRect(0, 0, surface.canvas.width, surface.canvas.height);
+        context.drawImage(this.labelCanvas, 0, 0);
+        surface.texture.needsUpdate = true;
+        label.material = surface.material;
+        label.userData.labelSurface = surface;
       }
       this.appearance.apply(group, ease(this.lift.value / 0.4));
       this.appearance.setClarity(group, this.decryption.clarity);
@@ -900,6 +916,7 @@ export class ArchiveScene {
       });
       this.lift.value = 0;
       this.lift.velocity = 0;
+      this.trimOutgoing();
     }
     this.selectedSlot = next;
     this.selectedCell = cell;
@@ -917,6 +934,8 @@ export class ArchiveScene {
       this.decryption.select(o.clarity);
       this.scene.remove(o.group);
       this.appearance.dispose(o.group);
+      this.covers?.releaseSnapshot(o.group);
+      this.releaseLabelSurface(o.group);
       this.outgoing.splice(returning, 1);
     }
     if (musicLibrary && this.musicNavigationLift && this.musicPresentation.placed) {
@@ -930,6 +949,66 @@ export class ArchiveScene {
     if (!musicLibrary) this.drawLabel(index);
     if (musicLibrary) void this.covers?.select(records[index]);
   }
+  /**
+   * Retire the oldest outgoing card once the trail gets long.
+   *
+   * Cards are left behind at the rows already visited so that scrolling back
+   * finds the one being returned to, and that trail is never trimmed while it
+   * could still be reached. But nothing bounded it: a long pass down a shelf
+   * kept every card alive, and each one holds a cover surface and a label
+   * surface. Twenty-four rows back is roughly fifteen world units behind the
+   * camera — well out of frame — so this is a safety valve, not a visual change.
+   */
+  private trimOutgoing() {
+    while (this.outgoing.length > MUSIC_OUTGOING_LIMIT) {
+      const oldest = this.outgoing.shift()!;
+      this.scene.remove(oldest.group);
+      this.appearance.dispose(oldest.group);
+      this.covers?.releaseSnapshot(oldest.group);
+      this.releaseLabelSurface(oldest.group);
+    }
+  }
+
+  /**
+   * A recycled label surface for an outgoing card.
+   *
+   * The card's printed label is a one-off canvas copy of `labelCanvas`, and it
+   * used to be allocated — canvas, texture and material — on every album switch
+   * in the detail view. Each pooled unit owns its own texture, which is what
+   * lets several cards coexist and still show different art.
+   */
+  private acquireLabelSurface() {
+    const recycled = this.labelSurfaces.pop();
+    if (recycled) return recycled;
+    const canvas = document.createElement("canvas");
+    canvas.width = 1024;
+    canvas.height = 440;
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.generateMipmaps = false;
+    texture.minFilter = THREE.LinearFilter;
+    return {
+      canvas,
+      texture,
+      material: new THREE.MeshBasicMaterial({
+        map: texture,
+        toneMapped: false,
+        transparent: true,
+        depthWrite: false,
+      }),
+    };
+  }
+
+  private releaseLabelSurface(group: THREE.Object3D) {
+    for (const child of group.children) {
+      const mesh = child as THREE.Mesh;
+      const surface = mesh.userData.labelSurface as CardLabelSurface | undefined;
+      if (!surface) continue;
+      mesh.userData.labelSurface = undefined;
+      this.labelSurfaces.push(surface);
+    }
+  }
+
   private emitPulse(cell: ArchiveCell) {
     this.pulses.push({ ...cell, time: this.clock });
     this.pulses = this.pulses.slice(-6);

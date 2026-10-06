@@ -31,13 +31,13 @@ const APP = path.join(REPO, 'app')
 
 /** The third-party build this modification sits on top of. Treated as read-only. */
 const DEFAULT_BASE = 'C:/Users/徐梓烽/Downloads/Rhine-Music-Windows-0.3.0-二次修改'
-const DEFAULT_OUT = 'C:/AI Document/releases/rhine-music-local-mod/v0.3.0-local.2'
+const DEFAULT_OUT = 'C:/AI Document/releases/rhine-music-local-mod/v0.3.0-local.3'
 /** Files the launcher loads from its own directory. */
 const SHELL_FILES = ['RhineMusic.exe', 'libmpv-2.dll', 'app.ico', 'no-log.flag', 'LICENSE', 'NOTICE.md', 'README-Windows.md']
 /** Reference docs copied from the repo into the package root. */
 const DOCS = {
   '使用说明-本地修改版.md': path.join(REPO, 'docs/使用说明-本地修改版.md'),
-  '发布说明.md': path.join(REPO, 'docs/发布说明-v0.3.0-local.2.md'),
+  '发布说明.md': path.join(REPO, 'docs/发布说明-v0.3.0-local.3.md'),
 }
 
 function arg(name, fallback) {
@@ -285,6 +285,21 @@ for (const name of ['RhineMusic.exe', 'libmpv-2.dll']) {
   const a = await hashOf(path.join(APP, 'dist', 'index.html'))
   const b = await hashOf(path.join(out, 'app', 'dist', 'index.html'))
   checks.push(['app/dist/index.html', a === b, a])
+}
+// The entry the interface actually loads. The lesson from v0.3.0-local.1 was
+// "package exists ≠ package is current": a stale app/dist meant the package
+// shipped an old entry even though it built fine. This re-derives the entry
+// filename from the package's own index.html and fails the build if that file
+// is not on disk — so a half-mirrored assets/ can never pass silently.
+{
+  const html = await fs.readFile(path.join(out, 'app', 'dist', 'index.html'), 'utf8')
+  const entry = html.match(/assets\/index-[A-Za-z0-9_-]+\.js/)?.[0]
+  if (!entry) {
+    checks.push(['入口脚本解析', false, 'index.html 未引用 assets/index-*.js'])
+  } else {
+    const present = await exists(path.join(out, 'app', 'dist', entry))
+    checks.push([`入口脚本 ${entry}`, present, present ? entry : '缺失'])
+  }
 }
 {
   const a = await hashOf(path.join(APP, 'scripts', 'music-server.mjs'))
