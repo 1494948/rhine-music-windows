@@ -15,6 +15,7 @@
 - **第三轮（2026-10-06）已完成 P0–P3**：需求 A 卡顿**彻底解决**（P1：文件头测尺寸一次解码到位 + 两级字节预算缓存 402MB→88MB + 快照面复用池 + 空闲预取 + 单飞详情解码）；歌词动效**对齐 AMLL**（P2：逐字独立变换 `--g`、行进入/退出、接手过冲、间奏律动点、高亮行放大，全部可关可调）；「歌词」参数模块补全（P3：四组分类 + 每项/分组复位 + 三套预设 + JSON 导入导出 + 预览选歌选行与跟随播放，13→20 项）；**顺手修掉长期基线缺陷 `check-music-model`（白天玻璃雾面被检查态拉低）**。全部检查 **13/13 通过**
 - **第三轮 P4（2026-10-06）已完成：数据源扩充**。`album-online.mjs` 新增 **网易云音乐**（`/api/search/get/web` 定 id → `/api/v1/album/{id}` 取长简介，繁转简，双重复核）与 **Discogs / Wikidata** best-effort 末位来源（各自独立 3s 预算 + 熔断，失败只空自己一行）；新增可达性自检 `check-music-online-sources.mjs` 并纳入 `check:music`；**覆盖率 39/79(49.4%) → 60/78(76.9%)，+27.5 个百分点，报错 0**（网易云贡献 19 张命中、其中 5 张提供 QQ 缺失的长简介；Discogs 兜底 1 张）。详见 §6.3
 - **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.4/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现，已加入口哈希一致性断言）
+- **已发布到 GitHub**：源码在 `1494948/rhine-music-windows` 的 **`rhine-music-local-mod` 分支**（`main` 未动）；发布包脱敏后作为 Release `v0.3.0-local.4` 的附件（Pre-release）。详见 §5
 
 > ⚠️ **包的关系（2026-10-06 核实，此前一度说错，以此为准）**：
 >
@@ -22,7 +23,8 @@
 > |---|---|---|---|
 > | `v0.3.0-local.1` | `index-Dx5c5WkF.js`（09:22） | ❌ 仍有 `--line-p` | **已过期，别再验收** |
 > | `v0.3.0-local.2` | `index-vOTKXiS1.js`（13:57） | ✅ 第二轮 | 已被 `.3` 取代 |
-> | `v0.3.0-local.3` | `index-B7tTgcKt.js`（22:0x） | ✅ 第三轮 P0–P3 | **当前版** |
+> | `v0.3.0-local.3` | `index-B7tTgcKt.js`（22:0x） | ✅ 第三轮 P0–P3 | 已被 `.4` 取代 |
+> | `v0.3.0-local.4` | `index-C_CftChM.js`（22:32） | ✅ 第三轮 P0–P4 | **当前版**（已发布到 GitHub） |
 >
 > 教训（保留）：**包存在 ≠ 包是新的**。核对方式 —— 包内与仓库 `app/dist/index.html` 的入口文件名必须逐字相同：
 > ```bash
@@ -118,16 +120,42 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 
 | 项 | 值 |
 |---|---|
-| **GitHub 仓库** | **无 —— 本仓库仅本地使用**（`git remote -v` 必须始终为空） |
-| 分支 | `main` |
+| **GitHub 仓库** | **`https://github.com/1494948/rhine-music-windows`** —— 只推**分支**，`main` 保持不动 |
+| 推送分支 | **`rhine-music-local-mod`**（2026-10-06 首推，`b7b356b`） |
+| 本地分支 | `main`（开发主干）、`rhine-music-local-mod`（与远端同名，跟踪 `origin/rhine-music-local-mod`） |
 | 基线标签 | `baseline/thirdparty-0.3.0` |
 | 产品名 | Rhine Music（莱茵音乐）· 第三方二次修改版 |
-| 当前版本 | 本地包 `v0.3.0-local.3`（上游 `app/package.json` 仍为 `0.3.0`，不改上游版本号） |
-| 产物位置 | `releases/rhine-music-local-mod/v0.3.0-local.3/`（515 MB） |
+| 当前版本 | 本地包 `v0.3.0-local.4`（上游 `app/package.json` 仍为 `0.3.0`，不改上游版本号） |
+| 产物位置 | `releases/rhine-music-local-mod/v0.3.0-local.4/`（515 MB） |
+| Release | tag `v0.3.0-local.4`，**标为 Pre-release**，附件 `RhineMusic-v0.3.0-local.4-Windows-x64.zip`（231.3 MB） |
 | 产物命名规则 | `v<上游版本>-local.<本地迭代号>` |
 | 打开方式 | 双击产物根目录的 `RhineMusic.exe`（原生 WebView2 窗口，不需要浏览器） |
 
-**为什么不推远端**：① 用户明确要求全程仅本地；② `NOTICE.md` 声明非代码资产（3D 模型、音效采样等）不随 MIT 再分发，公开发布存在许可风险。**任何会话都不得添加 remote、不得 push。**
+**为什么选这个仓库、为什么另开分支**：`rhine-music-local-mod` 与仓库里既有的 Electron 版
+（`main`，release `v0.4.0`–`v0.4.5`）是**两条独立血脉**，共用远程但各走分支，互不覆盖。
+`main` 从未被本改动触碰（远端哈希仍是 `0d08d7a`）。
+
+**Release 为什么标 Pre-release**：主线 release 已到 `v0.4.5`。本条 tag 是 `v0.3.0-local.4`，
+版本号更低且属另一条血脉，若按普通 release 发布会被 GitHub 选为 "Latest Release"，
+在版本号上误导访客。标为 Pre-release 后不影响下载，只是不计入 Latest。**要改回普通 release，
+一次 API 调用即可**（`PATCH /releases/<id>` 把 `prerelease` 置 false）。
+
+**公开前的两道硬约束（2026-10-06 已执行，后续会话必须继续遵守）**：
+
+1. **发布包必须剥离私人数据**。发布的 ZIP 由 `releases/.../v0.3.0-local.4/` 镜像而来，
+   但**剔除了 `music-data-v3/library-index.json`（真实 79 张专辑）与 `music-data-v3/artwork/`
+   （16 张真实专辑封面）**，并把 `music-data-v3/config.json` 的 `roots` 清空为 `[]`。
+   否则等于公开用户本人的音乐清单与私人绝对路径。打包脚本目前**不自动做这件事**，
+   发新版本时必须手动重复这一步（或后续给脚本加 `--public` 开关）。
+2. **源码里的 Windows 用户名已脱敏**。`徐梓烽` 曾出现在 5 个受版本管理的文件中（12 处），
+   已全部替换为 `<用户名>`；`scripts/package-windows.mjs` 的 `DEFAULT_BASE` 改由
+   `os.homedir()` 推导，不再硬编码机器路径。
+
+**许可边界（用户已知情并选择照原样公开）**：`NOTICE.md` 声明原作 PV 采样
+（`typing-preview.wav`、`typing-samples.ts` 的三个 38ms 短音）、3D 模型与 MiSans 字体
+**不属 MIT 授权范围**。用户确认上游 [RonaldDeng/Rhine-Music-Demo](https://github.com/RonaldDeng/Rhine-Music-Demo)
+已是公开仓库、同款资产已公开，推送同一份内容不构成新增暴露，故**照原样推送并保留 NOTICE 声明**。
+根 `README.md` 已在首屏写明「非官方衍生作品、上游未参与/未认可/不提供支持」。
 
 ## 6. 已知的坑
 
