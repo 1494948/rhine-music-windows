@@ -17,6 +17,16 @@
 
 /* ------------------------------------------------------------------ 小白条 */
 
+/* Three stacked layers on one axis, all fed by the same accent light:
+
+     .detail-switch-halo   the wide, soft bloom — the haze around the bar
+     .detail-switch-glow   the tight bloom right behind it
+     .detail-switch-core   the capsule itself, lit from above
+
+   Three scales of one light read as a bloom; a single blurred ellipse reads as
+   a smudge. Only transform, scale and opacity ever move, so the two blurred
+   layers stay cached textures and a frame costs composition rather than paint. */
+
 .detail-switch {
   position: absolute;
   left: 50%;
@@ -51,6 +61,7 @@
   cursor: grabbing;
 }
 
+.detail-switch-halo,
 .detail-switch-glow,
 .detail-switch-core {
   position: absolute;
@@ -58,41 +69,94 @@
   top: 50%;
   border-radius: 999px;
   transform: translateX(-50%);
-  /* The float rides the `translate` longhand, which is applied before
-     `transform`, so it can never fight the centring above. `scale` carries the
-     hover so that a hover never restarts the animation. */
-  animation: switch-float 3.8s ease-in-out infinite alternate;
+  /* The idle drift rides the `translate` longhand, which the browser applies
+     before `transform`, so it can never fight the centring above. `scale`
+     carries the hover, so a hover never restarts a keyframe. */
+  pointer-events: none;
 }
 
-/* Hazy accent bloom, the same tone the selected card uses. */
-.detail-switch-glow {
-  width: 86px;
-  height: 22px;
-  margin: -11px 0 0;
+/* Hazy accent bloom, the same tone the selected card uses. Its own drift is the
+   slowest and the widest, and it swells as it goes: an outer bloom that moves a
+   little slower than the bar is what makes the bar look buoyant. */
+.detail-switch-halo {
+  width: 132px;
+  height: 44px;
+  margin: -22px 0 0;
   background: radial-gradient(
     50% 50% at 50% 50%,
     var(--accent),
-    transparent 72%
+    transparent 68%
   );
-  filter: blur(4px);
-  opacity: 0.3;
-  transition: opacity 320ms ease;
+  filter: blur(9px);
+  opacity: 0.2;
+  transition: opacity 420ms ease;
+  animation: switch-breathe 7.4s ease-in-out -2.4s infinite;
 }
 
-/* The bar itself: a hairline of ink, brightest at the middle. */
+/* The middle layer. A different duration and a negative delay from the other
+   two is the whole trick: identical timing on all three would read as one
+   rigid shape sliding up and down rather than as drifting light. */
+.detail-switch-glow {
+  width: 84px;
+  height: 24px;
+  margin: -12px 0 0;
+  background: radial-gradient(
+    50% 50% at 50% 50%,
+    var(--accent),
+    transparent 74%
+  );
+  filter: blur(4px);
+  opacity: 0.34;
+  transition: opacity 360ms ease;
+  animation: switch-drift 4.6s ease-in-out -1.2s infinite;
+}
+
+/* The bar itself: a hairline of ink, lit from above so it reads as a polished
+   rod rather than a rectangle, and faded at both ends so it has no terminus. */
 .detail-switch-core {
-  width: 48px;
-  height: 6px;
-  margin: -3px 0 0;
+  width: 52px;
+  height: 8px;
+  margin: -4px 0 0;
+  /* Clips the glint below to the capsule, so the light can only ever fall on
+     the bar. */
+  overflow: hidden;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.46),
+      rgba(255, 255, 255, 0) 52%
+    ),
+    linear-gradient(
+      90deg,
+      transparent,
+      var(--ink) 26%,
+      var(--ink) 74%,
+      transparent
+    );
+  opacity: 0.5;
+  transition:
+    opacity 320ms ease,
+    scale 380ms cubic-bezier(0.22, 1, 0.36, 1);
+  animation: switch-float 3.8s ease-in-out -0.6s infinite;
+}
+
+/* A slow glint travelling the length of the capsule. Paused by dragging and by
+   the lock along with everything else; it never carries information, it only
+   keeps the mark from going inert. */
+.detail-switch-core::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 16px;
   background: linear-gradient(
     90deg,
     transparent,
-    var(--ink) 20%,
-    var(--ink) 80%,
+    rgba(255, 255, 255, 0.62),
     transparent
   );
-  opacity: 0.5;
-  transition: opacity 260ms ease, scale 260ms ease;
+  animation: switch-glint 6.6s cubic-bezier(0.45, 0, 0.55, 1) -1.8s infinite;
 }
 
 @keyframes switch-float {
@@ -104,38 +168,143 @@
   }
 }
 
+@keyframes switch-drift {
+  from {
+    translate: 0 -2px;
+  }
+  to {
+    translate: 0 2px;
+  }
+}
+
+/* The outermost light swells as well as drifts, which is how a source reads as
+   alive without travelling any real distance. */
+@keyframes switch-breathe {
+  from {
+    translate: 0 -2.8px;
+    scale: 0.97;
+  }
+  to {
+    translate: 0 2.8px;
+    scale: 1.05;
+  }
+}
+
+@keyframes switch-glint {
+  0% {
+    translate: -18px 0;
+    opacity: 0;
+  }
+  14% {
+    opacity: 0.85;
+  }
+  46% {
+    opacity: 0.85;
+  }
+  62% {
+    translate: 54px 0;
+    opacity: 0;
+  }
+  100% {
+    translate: 54px 0;
+    opacity: 0;
+  }
+}
+
+/* Hover: the bar lengthens and thickens a little and every layer brightens,
+   rather than the old flat vertical stretch. The centre stays put because the
+   layer is centred on the axis, so this reads as the bar drawing itself up. */
 .detail-switch:not(.locked):hover .detail-switch-core {
-  opacity: 0.82;
-  scale: 1 1.4;
+  opacity: 0.88;
+  scale: 1.06 1.25;
 }
 
 .detail-switch:not(.locked):hover .detail-switch-glow {
-  opacity: 0.52;
+  opacity: 0.58;
 }
 
-/* Locked: the float stops outright and the bar reads as a solid mark. This is
-   the whole visible meaning of the lock — the drag stays available. */
+.detail-switch:not(.locked):hover .detail-switch-halo {
+  opacity: 0.34;
+}
+
+/* A visible focus mark: the bar is fully operable from the keyboard, and the
+   ring belongs on the capsule rather than on the 108×30 hit box, which would
+   draw a rectangle around empty space. */
+.detail-switch:focus-visible {
+  outline: none;
+}
+
+.detail-switch:focus-visible .detail-switch-core {
+  opacity: 0.96;
+  box-shadow:
+    0 0 0 1px var(--accent),
+    0 0 14px 3px var(--accent);
+}
+
+.detail-switch:focus-visible .detail-switch-glow {
+  opacity: 0.6;
+}
+
+.detail-switch:not(.locked):focus-visible .detail-switch-halo {
+  opacity: 0.4;
+}
+
+/* Locked: the drift stops and the bar reads as a solid mark. This is the whole
+   visible meaning of the lock — the drag stays available.
+   `animation-play-state: paused` rather than `animation: none` on purpose:
+   removing the animation snaps each layer back to its base offset, so the bar
+   would jump at the instant of the click. Pausing holds it exactly where it is,
+   and unpausing resumes from the same place. The glint is paused too, because
+   "locked" should be legible at a glance. */
+.detail-switch.locked .detail-switch-halo,
+.detail-switch.locked .detail-switch-glow,
 .detail-switch.locked .detail-switch-core,
-.detail-switch.locked .detail-switch-glow {
-  animation: none;
-}
-
-.detail-switch.locked .detail-switch-core {
-  opacity: 0.92;
-  scale: 1 1.15;
-}
-
-.detail-switch.locked .detail-switch-glow {
-  opacity: 0.16;
-}
-
-.detail-switch.dragging .detail-switch-core,
-.detail-switch.dragging .detail-switch-glow {
+.detail-switch.locked .detail-switch-core::after {
   animation-play-state: paused;
 }
 
+.detail-switch.locked .detail-switch-core {
+  opacity: 0.94;
+  scale: 1 1.18;
+}
+
+.detail-switch.locked .detail-switch-glow {
+  opacity: 0.18;
+}
+
+.detail-switch.locked .detail-switch-halo {
+  opacity: 0.1;
+}
+
+/* Grabbing compresses the capsule; letting go springs it back on a slower curve
+   than the one it compressed on. Asymmetric timing in the two directions is
+   what makes the press feel like a solid object. */
+.detail-switch.dragging .detail-switch-halo,
+.detail-switch.dragging .detail-switch-glow,
+.detail-switch.dragging .detail-switch-core,
+.detail-switch.dragging .detail-switch-core::after {
+  animation-play-state: paused;
+}
+
+.detail-switch.dragging .detail-switch-core {
+  opacity: 0.95;
+  scale: 1.02 0.72;
+  transition-duration: 150ms;
+}
+
+.detail-switch.dragging .detail-switch-glow {
+  opacity: 0.6;
+}
+
+.detail-switch.dragging .detail-switch-halo {
+  opacity: 0.36;
+}
+
+/* Reduced motion keeps every state, and removes every idle animation. */
+.detail-switch.reduce-motion .detail-switch-halo,
+.detail-switch.reduce-motion .detail-switch-glow,
 .detail-switch.reduce-motion .detail-switch-core,
-.detail-switch.reduce-motion .detail-switch-glow {
+.detail-switch.reduce-motion .detail-switch-core::after {
   animation: none;
   transition: none;
 }

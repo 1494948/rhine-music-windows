@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url'
 import { promises as fs, createReadStream } from 'node:fs'
 import { MusicLibraryStore, safeRootList } from './music-library.mjs'
 import { readLyrics } from './lyrics.mjs'
+import { AlbumOnlineResolver } from './album-online.mjs'
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' }
@@ -86,6 +87,9 @@ export async function createMusicServer({
   autoScan = true,
 } = {}) {
   const store = providedStore ?? await new MusicLibraryStore({ dataDir, defaultRoots }).init()
+  // One resolver per server so its disk cache, in-memory cache and host
+  // breakers are shared across requests instead of rebuilt per album view.
+  const onlineResolver = new AlbumOnlineResolver({ dataDir: store.dataDir })
   const server = http.createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Referrer-Policy', 'same-origin')
@@ -151,6 +155,32 @@ export async function createMusicServer({
         const file = store.trackFile(lyrics[1])
         if (!file) return json(response, 404, { error: '索引中没有此文件' })
         return json(response, 200, await readLyrics(file))
+      }
+      // The online supplement is resolved per album and cached on disk under the
+      // data directory, so the index never grows and a re-opened album is free.
+      const online = /^\/api\/album-online\/([a-zA-Z0-9-]+)$/.exec(route)
+      if (online && get) {
+        // `onlineEnabled` is the switch for *automatic* enrichment during a scan.
+        // A click on the panel's own button is a separate, deliberate request and
+        // sends `consent=1`, so the setting keeps its scan-time meaning without
+        // making the explicit action silently inert on a default install.
+        const consent = url.searchParams.get('consent') === '1'
+        if (!consent && !store.config.onlineEnabled)
+          return json(response, 200, {
+            status: 'disabled',
+            reason: '线上自动补录已在资料库设置中关闭；点击「线上补充详情与背景」可随时单独读取。',
+          })
+        const album = store.index.albums.find((entry) => entry.id === online[1] && store.config.roots.includes(entry._root))
+        if (!album) return json(response, 404, { error: '索引中没有此专辑' })
+        onlineResolver.setContact(store.musicBrainzContact)
+        return json(
+          response,
+          200,
+          await onlineResolver.resolve(
+            { id: album.id, title: album.title, artist: album.artist, year: album.year },
+            { force: url.searchParams.get('force') === '1' },
+          ),
+        )
       }
       if (route === '/api/foobar/status' && get) return json(response, 200, { configured: !!store.config.foobarBaseUrl, baseUrl: store.config.foobarBaseUrl, connected: false, note: 'configured 仅代表已保存地址；连接状态需读取 /api/foobar/player 实际响应。' })
       if (route.startsWith('/api/foobar/')) {

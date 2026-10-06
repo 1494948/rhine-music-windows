@@ -5,13 +5,17 @@
  * State machine
  * ------------
  *   [detail]  p = 0, album detail in place, bar docked at the top anchor
- *     hover          → the bar floats gently (CSS, ±1.6px idle, ±2.4px hover)
- *     click          → [locked]: the float stops, the bar reads as solid
+ *     hover          → the bar lengthens and every light layer blooms (CSS)
+ *     click          → [locked]: the idle drift freezes in place and the bar
+ *                      reads as a solid mark; the drag stays available
  *     pointerdown    → warm-up runs once, the pane is fetched and mounted
  *     drag down      → p: 0 → 1, detail slides down and fades, lyrics fill in
  *                      from the top, the bar travels to the bottom anchor
  *     drag up        → p: 1 → 0, exact reverse
- *     release        → p > 0.5 springs to [lyrics], otherwise springs back
+ *     release        → the drag's own velocity is handed to the spring, so a
+ *                      flick carries the bar to the far end on its own; a slow
+ *                      release lets p > 0.5 settle to [lyrics] and p <= 0.5
+ *                      settle back to [detail]
  *
  * Reading of "点击可锁定状态并停止浮动": the lock freezes the idle float and
  * marks the bar, but it never disables the drag — a control whose only gesture
@@ -47,6 +51,13 @@ const TAP_SLOP = 4;
 /** Settle spring; snappier than the lyrics scroll so the switch feels direct. */
 const STIFFNESS = 118;
 const DAMPING = 19;
+/** Progress per second above which a release is a throw, not a placement. */
+const FLICK_SPEED = 1.1;
+/** Ceiling for the seeded release velocity, in progress per second. */
+const MAX_FLICK = 2.6;
+/** Fastest and slowest sample interval trusted when reading drag velocity. */
+const MIN_SAMPLE = 0.008;
+const MAX_SAMPLE = 0.2;
 const HOST_INSET_TOP = 84;
 const HOST_INSET_BOTTOM = 68;
 /** How far the album detail slides down as it fades out. */
@@ -70,6 +81,9 @@ export class DetailSwitch {
   private lastFrameTime = 0;
   private velocity = 0;
   private settleTarget = 0;
+  /** Progress per second, measured during the drag so a flick can be thrown. */
+  private dragVelocity = 0;
+  private lastMoveTime = 0;
   private travel = 1;
   private topAnchor = HOST_INSET_TOP;
   private reduced = false;
@@ -94,7 +108,8 @@ export class DetailSwitch {
     element.setAttribute("aria-valuenow", "0");
     element.setAttribute("aria-valuetext", "专辑详情");
     element.title = "向下拖动查看歌词 · 点击锁定浮动";
-    element.innerHTML = '<span class="detail-switch-glow" aria-hidden="true"></span><span class="detail-switch-core" aria-hidden="true"></span>';
+    element.innerHTML =
+      '<span class="detail-switch-halo" aria-hidden="true"></span><span class="detail-switch-glow" aria-hidden="true"></span><span class="detail-switch-core" aria-hidden="true"></span>';
     options.host.append(element);
     this.element = element;
 
@@ -176,6 +191,7 @@ export class DetailSwitch {
     if (this.frame) cancelAnimationFrame(this.frame);
     this.frame = 0;
     this.velocity = 0;
+    this.dragVelocity = 0;
     this.dragging = false;
     this.pointerId = -1;
     this.element.classList.remove("dragging");
@@ -217,6 +233,8 @@ export class DetailSwitch {
     this.frame = 0;
     this.dragging = true;
     this.moved = false;
+    this.dragVelocity = 0;
+    this.lastMoveTime = 0;
     this.pointerId = event.pointerId;
     this.startY = event.clientY;
     this.startProgress = this.progress;
@@ -233,16 +251,42 @@ export class DetailSwitch {
     this.moved = true;
     // A comfortable drag distance rather than the full dock travel: the bar's
     // own glide to the far anchor carries the rest of the motion.
-    this.apply(clamp(this.startProgress + delta / DRAG_TRAVEL));
+    const next = clamp(this.startProgress + delta / DRAG_TRAVEL);
+    const now = event.timeStamp || performance.now();
+    const elapsed = this.lastMoveTime
+      ? Math.min((now - this.lastMoveTime) / 1000, MAX_SAMPLE)
+      : 0;
+    this.lastMoveTime = now;
+    if (elapsed > MIN_SAMPLE) {
+      // Smoothed, so a single jittery sample cannot fling the bar on release.
+      // Sampling here rather than at release time is what makes a flick work:
+      // by the time pointerup arrives the pointer has already stopped moving.
+      const instant = (next - this.progress) / elapsed;
+      this.dragVelocity = this.dragVelocity * 0.6 + instant * 0.4;
+    }
+    this.apply(next);
   }
 
   private pointerUp(event: PointerEvent) {
     if (!this.dragging || event.pointerId !== this.pointerId) return;
     const wasDrag = this.moved;
+    const velocity = this.dragVelocity;
     this.endDrag();
     if (this.element.hasPointerCapture(event.pointerId)) this.element.releasePointerCapture(event.pointerId);
-    if (wasDrag) this.animateTo(this.progress > 0.5 ? 1 : 0);
+    if (wasDrag) this.animateTo(this.releaseTarget(velocity), velocity);
     else this.setLocked(!this.lockActive);
+  }
+
+  /**
+   * Where a released drag lands. A throw decides on its own: a quick flick from
+   * just past halfway should carry the bar all the way to the far end, which is
+   * what makes the gesture feel thrown rather than dropped. Anything gentler
+   * falls back to the nearer end.
+   */
+  private releaseTarget(velocity: number) {
+    if (velocity > FLICK_SPEED) return 1;
+    if (velocity < -FLICK_SPEED) return 0;
+    return this.progress > 0.5 ? 1 : 0;
   }
 
   private pointerCancel() {
@@ -287,7 +331,7 @@ export class DetailSwitch {
     this.options.onLockChange?.(next);
   }
 
-  private animateTo(target: number) {
+  private animateTo(target: number, velocity = 0) {
     this.warmUpIfSettlingToLyrics(target);
     if (this.reduced) {
       this.apply(target);
@@ -296,7 +340,10 @@ export class DetailSwitch {
     }
     this.settleTarget = target;
     this.animating = true;
-    this.velocity = 0;
+    // Seeding the spring with the drag's own velocity is the difference between
+    // "the bar arrives" and "the bar was thrown": it keeps the momentum the hand
+    // gave it, and the spring's damping takes that momentum back out.
+    this.velocity = clampVelocity(velocity);
     this.lastFrameTime = 0;
     if (!this.frame) this.frame = requestAnimationFrame(this.stepSettle);
   }
@@ -365,4 +412,14 @@ export class DetailSwitch {
 
 function clamp(value: number) {
   return value < 0 ? 0 : value > 1 ? 1 : value;
+}
+
+/**
+ * Caps the velocity handed to the settle spring. `apply` clamps the position to
+ * the travel anyway, so an over-fast sample could only ever waste frames
+ * saturating at the end — never overshoot past it.
+ */
+function clampVelocity(value: number) {
+  if (!Number.isFinite(value)) return 0;
+  return value > MAX_FLICK ? MAX_FLICK : value < -MAX_FLICK ? -MAX_FLICK : value;
 }

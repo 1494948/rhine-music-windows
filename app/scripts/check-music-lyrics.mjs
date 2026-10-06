@@ -431,12 +431,17 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
     assert.ok(switchCss.includes(token), `music-lyrics-switch.css is missing ${token}`);
   const switchTokens = [
     '.detail-switch',
+    '.detail-switch-halo',
     '.detail-switch-core',
     '.detail-switch-glow',
     'var(--switch-top',
     '.detail-switch.locked',
     '.detail-switch.dragging',
     'switch-float',
+    'switch-breathe',
+    'switch-glint',
+    'animation-play-state: paused',
+    ':focus-visible',
     'touch-action: none',
   ];
   for (const token of switchTokens)
@@ -453,6 +458,112 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   assert.ok(paneSource.includes('setProperty("--shift"'));
   assert.ok(paneSource.includes('dataset.d ='));
   assert.ok(switchSource.includes('translate3d(-50%'));
+}
+
+// ------------------------------------------- 线上补录层与面板的接线契约
+
+{
+  // The online layer is the only one that can arrive without a source file, so
+  // its rules are asserted against the resolver rather than trusted.
+  const online = {
+    status: 'ok',
+    checkedAt: '2026-10-06T00:00:00.000Z',
+    blocks: [{ heading: '专辑简介', body: '线上简介正文。', source: { name: '某百科', url: 'https://example.com/c' } }],
+    facts: [{ label: '线上首次发行', value: '2025 年 3 月 14 日' }, { label: '', value: '无标签应被丢弃' }],
+    sources: [{ name: '某百科', url: 'https://example.com/c', license: 'CC BY-SA 4.0' }, { name: '' }],
+    providers: [
+      { id: 'musicbrainz', label: 'MusicBrainz', status: 'ok' },
+      { id: 'wikipedia', label: '维基百科', status: 'failed', detail: '无法连接' },
+    ],
+    searchUrl: 'https://zh.wikipedia.org/w/index.php?search=x',
+  };
+  const adopted = resolveAlbumArchive(album(), { ...context, online }, { albums: {} });
+  assert.equal(adopted.status, 'online');
+  assert.equal(adopted.blocks[0].heading, '专辑简介');
+  // Empty entries are dropped rather than rendered as blank rows.
+  assert.deepEqual(adopted.facts.filter((fact) => !fact.label), []);
+  assert.ok(adopted.facts.some((fact) => fact.label === '线上首次发行'));
+  assert.ok(adopted.facts.some((fact) => fact.label === '档案编号'), 'derived facts still follow');
+  assert.deepEqual(adopted.sources.map((source) => source.name), ['某百科']);
+  // A source that failed is reported separately from the ones that contributed.
+  assert.deepEqual(
+    adopted.providers.map((provider) => provider.id),
+    ['wikipedia'],
+    'only the unanswered sources are carried into the panel',
+  );
+  // Prose was obtained, so the search escape hatch is not offered.
+  assert.equal(adopted.searchUrl, undefined);
+
+  // A human override still outranks a live fetch.
+  const manual = resolveAlbumArchive(album(), { ...context, online }, {
+    albums: { '测试专辑': { significance: '人工意义' } },
+  });
+  assert.equal(manual.status, 'manual');
+
+  // Nothing adopted: the panel keeps the derived structure and says why.
+  const empty = resolveAlbumArchive(
+    album(),
+    { ...context, online: { status: 'empty', error: '公开来源未找到可靠对应的条目。', searchUrl: 'https://zh.wikipedia.org/w/index.php?search=x' } },
+    { albums: {} },
+  );
+  assert.equal(empty.status, 'derived');
+  assert.equal(empty.blocks.length, 0, 'a failed lookup never becomes prose');
+  // Compared against the pure-derived baseline rather than a hardcoded count:
+  // a failed lookup must add nothing, and must remove nothing.
+  assert.equal(empty.facts.length, resolveAlbumArchive(album(), context, { albums: {} }).facts.length);
+  assert.match(empty.hint, /未采用任何内容/);
+  assert.equal(empty.searchUrl, 'https://zh.wikipedia.org/w/index.php?search=x');
+
+  // A stored introduction is kept even when the live lookup adopted nothing.
+  const withLibrary = resolveAlbumArchive(
+    album({ description: '本地已核对简介。', descriptionSource: { name: '某百科', url: 'https://example.com/a' } }),
+    { ...context, online: { status: 'error', error: '全部来源不可达' } },
+    { albums: {} },
+  );
+  assert.equal(withLibrary.status, 'library');
+  assert.match(withLibrary.hint, /全部来源不可达/);
+
+  // The control row only appears when a caller names an album, which is what
+  // keeps a fixture render free of buttons.
+  assert.equal(albumArchiveMarkup(adopted, escapeHtml).includes('archive-actions'), false);
+  const wired = albumArchiveMarkup(adopted, escapeHtml, {
+    albumId: 'album-abc',
+    busy: false,
+    adopted: true,
+    notice: '已读取线上资料。',
+  });
+  assert.ok(wired.includes('data-status="online"'));
+  assert.ok(wired.includes('data-action="online-album"'));
+  assert.ok(wired.includes('data-online-feedback="album-abc"'));
+  assert.ok(wired.includes('重新读取线上资料'), 'an adopted album offers a refresh');
+  assert.ok(wired.includes('未采用的来源'), 'a failed source is listed separately');
+  assert.ok(
+    albumArchiveMarkup(adopted, escapeHtml, { albumId: 'album-abc', busy: true }).includes('disabled'),
+    'a busy control is disabled',
+  );
+}
+
+{
+  // Cross-file contract for the online panel: the actions the controller
+  // dispatches, the status the stylesheet styles, and the escape hatch the
+  // server hands back all have to be spelled the same way.
+  const read = (name) => fs.readFile(new URL(`../src/${name}`, import.meta.url), 'utf8');
+  const [archiveCss, appSource, archiveSource] = await Promise.all([
+    read('music-archive.css'),
+    read('music-app.ts'),
+    read('music-archive.ts'),
+  ]);
+  assert.ok(archiveCss.includes('[data-status="online"]'));
+  assert.ok(archiveCss.includes('.archive-actions'));
+  assert.ok(archiveCss.includes('.archive-online-status'));
+  for (const action of ['online-album', 'online-library'])
+    assert.ok(appSource.includes(`case "${action}"`), `music-app.ts does not dispatch ${action}`);
+  assert.ok(appSource.includes('data-action="online-library"'));
+  assert.ok(appSource.includes('/api/album-online/'));
+  assert.ok(appSource.includes('consent: "1"'), 'a deliberate click is marked as consent');
+  // The client must read the same status union the server sends.
+  for (const status of ['"manual"', '"online"', '"library"', '"derived"'])
+    assert.ok(archiveSource.includes(status), `music-archive.ts has no ${status} status`);
 }
 
 console.log('check-music-lyrics: ok');

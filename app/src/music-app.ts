@@ -60,6 +60,7 @@ import {
   albumArchiveMarkup,
   resolveAlbumArchive,
   type AlbumArchiveContext,
+  type AlbumArchiveOnline,
 } from "./music-archive";
 import {
   EMPTY_LYRICS,
@@ -209,6 +210,21 @@ let scene: ArchiveScene | undefined,
 let introductionsStarting = false,
   libraryStateVersion = 0,
   introductionRequestError = "";
+
+/**
+ * Request outcome per album for the online supplement. Deliberately kept out of
+ * the library snapshot: it is the state of a request, not library data, so it
+ * must not survive a reload or be overwritten by a poll.
+ *
+ * A failed entry is kept here and never folded into the rendered archive, which
+ * is what stops a failing request from re-triggering its own render.
+ */
+type OnlineEntry =
+  | { state: "loading" }
+  | { state: "done"; payload: AlbumArchiveOnline }
+  | { state: "error"; error: string };
+const onlineCache = new Map<string, OnlineEntry>();
+let onlineBatch = false;
 let viewer: ModelViewer | undefined;
 let boot: MusicBoot | undefined;
 const effects = new TerminalAudio();
@@ -983,7 +999,7 @@ function renderDetail() {
   article.innerHTML = `<div class="detail-overline"><span>ALBUM ${String(selected + 1).padStart(3, "0")}</span><div class="detail-album-navigation" role="group" aria-label="切换专辑"><button data-action="prev" aria-label="上一张专辑">↑ 上一张</button><button data-action="next" aria-label="下一张专辑">下一张 ↓</button></div></div>
     <h1 title="${esc(a.title)}">${albumTitleMarkup(a.title)}</h1><p class="detail-artist">${esc(a.artist)}${a.offline ? '<span class="offline-badge">目录离线</span>' : ""}</p>
     <div class="album-facts">${fields.map(([name, value]) => `<div><small>${name}</small><span>${esc(String(value))}</span></div>`).join("")}</div>
-    ${albumArchiveMarkup(resolveAlbumArchive(a, archiveContextFor(a)), esc)}
+    ${albumArchiveMarkup(resolveAlbumArchive(a, archiveContextFor(a)), esc, archiveActionsFor(a))}
     <div class="music-tabs" role="tablist" aria-label="专辑信息"><button role="tab" id="tab-tracks" data-tab="tracks" tabindex="${activeTab === "tracks" ? 0 : -1}" aria-selected="${activeTab === "tracks"}" aria-controls="album-tab-content"><span>01</span> 歌单</button><button role="tab" id="tab-about" data-tab="about" tabindex="${activeTab === "about" ? 0 : -1}" aria-selected="${activeTab === "about"}" aria-controls="album-tab-content"><span>02</span> 专辑介绍</button><i class="music-tab-indicator" aria-hidden="true"></i></div>
     <div id="album-tab-content" role="tabpanel" aria-labelledby="tab-${activeTab}">${activeTab === "tracks" ? trackList(a, discs) : albumAbout(a)}</div>`;
   article.scrollTop = scroll;
@@ -1000,8 +1016,10 @@ function renderDetail() {
 }
 /** Shelf position of an album, used by the archive panel's derived facts. */
 function archiveContextFor(a: MusicAlbum): AlbumArchiveContext {
+  const online = onlineCache.get(a.id);
+  const onlinePayload = online?.state === "done" ? online.payload : undefined;
   const ordinal = records.findIndex((record) => record.id === a.id);
-  if (ordinal < 0) return {};
+  if (ordinal < 0) return { online: onlinePayload };
   const location = fileLocation(ordinal);
   return {
     ordinal: ordinal + 1,
@@ -1009,7 +1027,156 @@ function archiveContextFor(a: MusicAlbum): AlbumArchiveContext {
     column: archiveColumns[location.lane],
     columnIndex: location.lane + 1,
     columnCount: archiveColumns.length,
+    online: onlinePayload,
   };
+}
+/** Control state for the archive panel's online button. */
+function archiveActionsFor(a: MusicAlbum) {
+  const entry = onlineCache.get(a.id);
+  return {
+    albumId: a.id,
+    busy: entry?.state === "loading",
+    adopted: entry?.state === "done" && entry.payload.status === "ok",
+    notice: onlineNotice(a.id),
+  };
+}
+/**
+ * What the panel says about this album's supplement. It always distinguishes
+ * "not asked yet", "asked and nothing was adopted" and "could not be reached",
+ * because the three need different follow-up from the reader.
+ */
+function onlineNotice(id: string) {
+  const entry = onlineCache.get(id);
+  if (!entry) return "";
+  if (entry.state === "loading") return "正在读取线上资料…";
+  if (entry.state === "error") return `线上补录失败：${entry.error}`;
+  const payload = entry.payload;
+  if (payload.status === "disabled")
+    return payload.reason || "线上补录已在资料库设置中关闭。";
+  if (payload.status === "ok") {
+    const unanswered = (payload.providers ?? []).filter(
+      (provider) => provider.status !== "ok",
+    );
+    const when = payload.checkedAt
+      ? new Date(payload.checkedAt).toLocaleString("zh-CN")
+      : "";
+    return `已读取线上资料${payload.cached ? "（本机缓存）" : ""}${when ? ` · 核对于 ${when}` : ""}。${
+      unanswered.length
+        ? `未采用的来源：${unanswered
+            .map((provider) => `${provider.label}（${provider.detail || provider.status}）`)
+            .join("；")}。`
+        : ""
+    }`;
+  }
+  return payload.error || payload.reason || "公开来源未找到可靠对应的条目。";
+}
+/** `consent=1` marks a deliberate click; `force=1` asks the server to skip its cache. */
+function onlineQuery(id: string, force: boolean) {
+  const params = new URLSearchParams({ consent: "1" });
+  if (force) params.set("force", "1");
+  return `/api/album-online/${encodeURIComponent(id)}?${params}`;
+}
+/**
+ * Re-renders just the archive panel. A whole `renderDetail()` would replay the
+ * reading column's reveal animation on every finished request, which is exactly
+ * the flicker this panel is meant to avoid.
+ */
+function patchArchive() {
+  const a = currentAlbum();
+  const section = document.querySelector("#album-detail-content .album-archive");
+  if (!a || !section) return;
+  section.outerHTML = albumArchiveMarkup(
+    resolveAlbumArchive(a, archiveContextFor(a)),
+    esc,
+    archiveActionsFor(a),
+  );
+  // The replaced subtree needs the same reading treatment as the original.
+  documentDecryption.refresh();
+}
+/** Updates the control in place for the states that change before content does. */
+function syncOnlineControls(id: string) {
+  const entry = onlineCache.get(id);
+  const busy = entry?.state === "loading";
+  const button = document.querySelector<HTMLButtonElement>(
+    '#album-detail-content [data-action="online-album"]',
+  );
+  if (button) {
+    button.disabled = busy;
+    button.textContent = busy
+      ? "正在读取线上资料…"
+      : entry?.state === "done" && entry.payload.status === "ok"
+        ? "重新读取线上资料 ↗"
+        : "线上补充详情与背景 ↗";
+  }
+  const note = document.querySelector<HTMLElement>(
+    `[data-online-feedback="${id}"]`,
+  );
+  if (note) note.textContent = onlineNotice(id);
+}
+async function loadOnline() {
+  const album = currentAlbum();
+  if (demo || !album || album.offline) return;
+  const existing = onlineCache.get(album.id);
+  if (existing?.state === "loading") return;
+  // A second click on an album that already has a supplement is a refresh, so
+  // it asks the server to look again rather than replay its own cache.
+  const force = existing?.state === "done";
+  onlineCache.set(album.id, { state: "loading" });
+  syncOnlineControls(album.id);
+  try {
+    const payload = await request<AlbumArchiveOnline>(onlineQuery(album.id, force));
+    onlineCache.set(album.id, { state: "done", payload });
+    if (currentAlbum()?.id === album.id) patchArchive();
+  } catch (error) {
+    onlineCache.set(album.id, { state: "error", error: (error as Error).message });
+    if (currentAlbum()?.id === album.id) syncOnlineControls(album.id);
+  }
+}
+/** Reads the supplement for every album that has not been asked yet. */
+async function loadOnlineLibrary() {
+  if (demo || !library.albums.length || onlineBatch) return;
+  const targets = library.albums.filter(
+    (album) => !album.offline && onlineCache.get(album.id)?.state !== "done",
+  );
+  if (!targets.length) {
+    notify("每一张专辑的线上资料都已读取过。");
+    return;
+  }
+  onlineBatch = true;
+  let adopted = 0;
+  let missed = 0;
+  const report = (index: number) =>
+    updateOnlineBatchStatus(
+      `正在读取线上资料 ${index} / ${targets.length}…（已采用 ${adopted} 张，未采用 ${missed} 张）`,
+    );
+  report(0);
+  try {
+    for (let index = 0; index < targets.length; index++) {
+      const album = targets[index];
+      try {
+        const payload = await request<AlbumArchiveOnline>(
+          onlineQuery(album.id, false),
+        );
+        onlineCache.set(album.id, { state: "done", payload });
+        if (payload.status === "ok") adopted++;
+        else missed++;
+      } catch (error) {
+        onlineCache.set(album.id, { state: "error", error: (error as Error).message });
+        missed++;
+      }
+      report(index + 1);
+      // Keep the open album's panel in step while the run walks past it.
+      if (currentAlbum()?.id === album.id) patchArchive();
+    }
+  } finally {
+    onlineBatch = false;
+    updateOnlineBatchStatus("");
+    notify(`线上资料读取完成：采用 ${adopted} 张，未采用或失败 ${missed} 张。`);
+  }
+}
+function updateOnlineBatchStatus(text: string) {
+  const el = document.querySelector("#online-status");
+  if (el) el.textContent = text;
 }
 function trackList(a: MusicAlbum, discs: number) {
   if (!a.tracks.length)
@@ -1277,7 +1444,7 @@ function openPanel(next: Panel) {
 }
 function renderLibraryPanel() {
   $("#panel-body").innerHTML =
-    `<p class="panel-intro">根目录中的每首单曲各是一张卡片，优先使用自身内嵌封面。子文件夹按专辑展示，优先使用文件夹封面。</p><label class="field-label" for="music-roots">音乐文件夹<span>多个目录各占一行</span></label><textarea id="music-roots" rows="3" placeholder="/Users/你的用户名/Music">${esc(library.roots.map((r) => r.path).join("\n"))}</textarea><div class="panel-actions"><button class="primary-button" data-action="scan">保存目录并扫描 ↗</button><button data-action="rescan">重新扫描</button></div><div id="scan-status" class="scan-status"></div><div class="library-metrics"><div><b>${library.albums.length}</b><span>专辑</span></div><div><b>${library.albums.reduce((n, a) => n + a.tracks.length, 0)}</b><span>曲目</span></div><div><b>${library.genres.filter((g) => library.albums.some((a) => a.genreId === g.id)).length}</b><span>流派</span></div></div><section class="panel-section"><h3>在线资料与本地分类</h3><p>向 MusicBrainz 查询专辑名称与艺术家，补充流派和制作人员；音乐文件留在本机。已有资料使用缓存，人工分类优先保留。</p><button data-action="enrich-library" class="text-button">补充缺失的在线资料 ↗</button><button data-action="edit-genres" class="text-button">编辑流派归并规则 ↗</button></section><section class="panel-section"><h3>封面显示</h3><p>方形、竖版、横版封面均保持原始比例，完整放入卡片正面。没有封面时显示专辑名称占位，不使用其他专辑的图片。</p>${!library.albums.length ? '<button data-action="demo" class="text-button">查看演示封面 ↗</button>' : ""}</section>`;
+    `<p class="panel-intro">根目录中的每首单曲各是一张卡片，优先使用自身内嵌封面。子文件夹按专辑展示，优先使用文件夹封面。</p><label class="field-label" for="music-roots">音乐文件夹<span>多个目录各占一行</span></label><textarea id="music-roots" rows="3" placeholder="/Users/你的用户名/Music">${esc(library.roots.map((r) => r.path).join("\n"))}</textarea><div class="panel-actions"><button class="primary-button" data-action="scan">保存目录并扫描 ↗</button><button data-action="rescan">重新扫描</button></div><div id="scan-status" class="scan-status"></div><div class="library-metrics"><div><b>${library.albums.length}</b><span>专辑</span></div><div><b>${library.albums.reduce((n, a) => n + a.tracks.length, 0)}</b><span>曲目</span></div><div><b>${library.genres.filter((g) => library.albums.some((a) => a.genreId === g.id)).length}</b><span>流派</span></div></div><section class="panel-section"><h3>专辑详情与背景</h3><p>逐张读取公开元数据源（MusicBrainz / Apple Music 商店 / 维基百科），补充发行背景、发行日期与线上专辑类型，每条内容都附出处并缓存 30 天。音乐文件不会上传。</p><button data-action="online-library" class="text-button">逐张补充专辑详情与背景 ↗</button><p id="online-status" class="scan-status" role="status" aria-live="polite"></p></section><section class="panel-section"><h3>在线资料与本地分类</h3><p>向 MusicBrainz 查询专辑名称与艺术家，补充流派和制作人员；音乐文件留在本机。已有资料使用缓存，人工分类优先保留。</p><button data-action="enrich-library" class="text-button">补充缺失的在线资料 ↗</button><button data-action="edit-genres" class="text-button">编辑流派归并规则 ↗</button></section><section class="panel-section"><h3>封面显示</h3><p>方形、竖版、横版封面均保持原始比例，完整放入卡片正面。没有封面时显示专辑名称占位，不使用其他专辑的图片。</p>${!library.albums.length ? '<button data-action="demo" class="text-button">查看演示封面 ↗</button>' : ""}</section>`;
   updateScanStatus();
   const configSection = document.createElement("section");
   configSection.className = "panel-section";
@@ -1291,7 +1458,7 @@ function renderLibraryPanel() {
         onlineEnabled?: boolean;
       }>("/api/config");
       if (!configSection.isConnected) return;
-      configSection.innerHTML = `<h3>资料库连接</h3><label class="field-label" for="metadata-contact">MusicBrainz 联系邮箱或项目网址</label><input id="metadata-contact" type="text" value="${esc(config.musicBrainzContact || "")}" placeholder="你的联系邮箱或公开项目网址"><p>按 MusicBrainz 要求用于标识本应用的资料请求，不用于注册或订阅。</p><label class="settings-row"><span>扫描后自动补充新专辑资料<small>已有缓存不重复查询；断网仍可浏览与播放</small></span><input type="checkbox" id="online-enabled" ${config.onlineEnabled ? "checked" : ""}></label><button class="text-button" data-action="save-online">保存资料库设置 ↗</button><p>${config.musicBrainzConfigured ? "资料库请求标识已配置。" : "尚未配置；本地曲库和播放已可使用。"}</p>`;
+      configSection.innerHTML = `<h3>资料库连接</h3><label class="field-label" for="metadata-contact">MusicBrainz 联系邮箱或项目网址</label><input id="metadata-contact" type="text" value="${esc(config.musicBrainzContact || "")}" placeholder="你的联系邮箱或公开项目网址"><p>按 MusicBrainz 要求用于标识本应用的资料请求，不用于注册或订阅。</p><label class="settings-row"><span>扫描后自动补充新专辑资料<small>已有缓存不重复查询；断网仍可浏览与播放</small></span><input type="checkbox" id="online-enabled" ${config.onlineEnabled ? "checked" : ""}></label><button class="text-button" data-action="save-online">保存资料库设置 ↗</button><p>${config.musicBrainzConfigured ? "资料库请求标识已配置。" : "尚未配置；本地曲库和播放已可使用。"}「线上补充详情与背景」是手动操作，未勾选上面这项也可以用。</p>`;
     } catch (error) {
       if (configSection.isConnected)
         configSection.innerHTML = `<p>${esc((error as Error).message)}</p>`;
@@ -1638,6 +1805,12 @@ document.addEventListener("click", (e) => {
       break;
     case "introductions-library":
       void queryIntroductions();
+      break;
+    case "online-album":
+      void loadOnline();
+      break;
+    case "online-library":
+      void loadOnlineLibrary();
       break;
     case "edit-genres":
       void editGenres();

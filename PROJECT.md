@@ -8,10 +8,11 @@
 
 ## 2. 状态
 
-**开发中** · 最后更新：2026-10-06
+**可用** · 最后更新：2026-10-06
 
-- 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板；需求 C 小白条详情⇄歌词切换；需求 D 歌词解析/接口/动效面板；`app/dist` 已回灌为含 B/C/D 的最新构建（175 文件，MD5 校验一致）
-- 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需你在真实 GPU 下确认**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）。验证环境已就绪：本地服务 + 独立配置的 Edge 窗口（见第 4 节末的零拷贝回路），可直接开始验收。需求 C 的 `--switch-top` / `--switch-bottom` 落点、需求 B 的档案补录内容需按实机与真实曲库调整；若要验 WebView2 外壳与音频通道，才需要同步 `app/dist` + 改动的 `app/scripts/` 进分发副本
+- 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板（四级来源）；需求 C 小白条详情⇄歌词切换（含视觉精修与惯性抛掷）；需求 D 歌词解析/接口/动效面板；**需求 B 的第四层「线上补充专辑详情与背景」已补全并真机实测**；`app/dist` 已回灌为最新构建（175 文件，MD5 校验一致）
+- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.1/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现）
+- 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需你在真实 GPU 下确认**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）。验证环境见第 6 节末的零拷贝回路。需求 C 的 `--switch-top` / `--switch-bottom` 落点、线上补录的命中率（当前 49.4%）都还需按实机与真实曲库继续调
 
 ## 3. 技术栈与关键依赖
 
@@ -74,9 +75,26 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 拿到真实 GPU 与 DevTools（`F12`），足以验收 A/B/C/D 的界面与动效。完整命令与注意事项见第 6 节。
 当前测试环境已就绪：服务在 5173，Edge 独立配置目录窗口已打开该地址。
 
-**二级验证 —— 真机分发副本（只在需要验 WebView2 外壳与 libmpv 音频时做）**：把 `app/dist` 与改动的
-`app/scripts/`（`music-server.mjs`、`lyrics.mjs`）同步到一个**基准物整包复制出来的副本**里，用副本的
-`RhineMusic.exe` 实测。基准物 `C:\Users\徐梓烽\Downloads\Rhine-Music-Windows-0.3.0-二次修改\` **只读，禁止写回**。
+**二级验证 —— 真机分发副本**：直接用 `releases/rhine-music-local-mod/v0.3.0-local.1/` 里的
+`RhineMusic.exe` 实测（这就是本项目的交付形态，不再需要另造副本）。基准物
+`C:\Users\徐梓烽\Downloads\Rhine-Music-Windows-0.3.0-二次修改\` **只读，禁止写回**。
+
+**打包（可复现，一条命令）**：
+
+```bash
+export PATH="/usr/bin:/bin:/c/Windows/System32:$PATH"
+N="C:/Users/徐梓烽/.workbuddy/binaries/node/versions/22.22.2-3/node.exe"
+cd "C:/AI Document/projects/rhine-music-local-mod"
+"$N" scripts/package-windows.mjs                      # 输出到 releases/rhine-music-local-mod/v0.3.0-local.1
+"$N" scripts/package-windows.mjs --force              # 目录非空时覆盖
+"$N" scripts/package-windows.mjs --out <目录> --base <基准物>   # 换位置
+```
+
+打包前必须先把 `app/dist` 回灌为最新构建（否则包里是旧界面）。脚本会：
+复制基座外壳文件 → 镜像 `runtime/` 与 `app/dist` → 只带**服务端脚本的真实导入闭包**
+（5 个脚本）→ 只带这些脚本的 **npm 依赖闭包**（15 个包 / 6.74 MB，而非 110.5 MB）→
+镜像 `music-data-v3`（**排除 115 MB 的 `webview2`**）→ 写入包内文档与备用 `.bat` →
+最后逐文件 MD5 比对源与包内，不一致就以退出码 1 失败。
 
 ## 5. 发布信息
 
@@ -86,8 +104,10 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 | 分支 | `main` |
 | 基线标签 | `baseline/thirdparty-0.3.0` |
 | 产品名 | Rhine Music（莱茵音乐）· 第三方二次修改版 |
-| 当前版本 | 0.3.0（沿用上游 `package.json` 版本号） |
-| 产物命名规则 | 无（本仓库不产出发布包） |
+| 当前版本 | 本地包 `v0.3.0-local.1`（上游 `app/package.json` 仍为 `0.3.0`，不改上游版本号） |
+| 产物位置 | `releases/rhine-music-local-mod/v0.3.0-local.1/`（515 MB） |
+| 产物命名规则 | `v<上游版本>-local.<本地迭代号>` |
+| 打开方式 | 双击产物根目录的 `RhineMusic.exe`（原生 WebView2 窗口，不需要浏览器） |
 
 **为什么不推远端**：① 用户明确要求全程仅本地；② `NOTICE.md` 声明非代码资产（3D 模型、音效采样等）不随 MIT 再分发，公开发布存在许可风险。**任何会话都不得添加 remote、不得 push。**
 
@@ -156,8 +176,34 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
   `--switch-top: 84px`（静止位）与 `--switch-bottom: 68px`（歌词态距底）。改这两个值即可整体移位，
   无需动 TS。拖动位移按 320px 映射到全程（`DRAG_TRAVEL`），条形自身滑向另一端补足剩余行程。
 - **档案补录文件是 `app/content/album-archives.json`**（受版本管理）：`albums` 为空时界面自动退回
-  「本地已核对简介」或「本地数据推导」。**不要往里写没有来源的外部事实**——该文件是唯一允许写外部事实的地方，
-  正因为写了就必须署名，`sources` 字段会一并显示。
+  「线上补录」→「本地已核对简介」→「本地数据推导」。**不要往里写没有来源的外部事实**——该文件是唯一允许
+  写外部事实的地方，正因为写了就必须署名，`sources` 字段会一并显示。
+- **线上补录的四条实测事实（2026-10-06，勿凭想象推断）**：
+  1. **维基百科在本机不可达**：`zh.wikipedia.org` / `en.wikipedia.org` 解析到 Meta/Twitter 网段，连接必超时
+     （约 2.5s）。所以命中几乎全部来自 MusicBrainz；维基通道保留为"在能用的网络上加分"。熔断生效：
+     79 张专辑只付出 1 次超时，其余直接 `wikipedia:skipped`。
+  2. **Apple Music 商店对中国专辑无用**：`country=cn` 返回 `resultCount: 0`，`country=us` 返回 12 条
+     完全无关的结果（搜「范特西 周杰伦」给出 2CELLOS《Score》）。代码本来就拒绝采用（评分 < 8）。
+     **不要为了提高命中率去放宽阈值**——那会把错误事实写进界面。
+  3. **MusicBrainz 会返回 503**：官方语义是"退避后重试"，已实现一次有界重试（实测把《七里香》从失败变命中）。
+     503 **不**触发熔断（它是过载，不是不可达）；超预算也**不**触发熔断（那是慢，不是不可达）。
+  4. **实测覆盖度 39/79（49.4%）**，163.7s / 平均 2.07s/张。未命中的绝大多数是中文专辑在 MusicBrainz
+     无对应条目，界面如实报"未找到"并提示补全标签。**这是数据缺口，不是缺陷。**
+- **`onlineEnabled` 默认是 `false`**（`music-library.mjs` 初始 config）。它管的是**扫描后自动补录**，
+  不是手动点击。路由因此把两件事分开：客户端显式点击带 `?consent=1`；没带且开关关闭时返回
+  `{status:'disabled'}` 并说明原因。**别把它们合并**，否则默认安装上功能会静默失效。
+- **`robocopy` 不能用来复制单个文件**：把文件当源会报 `错误 123 (0x0000007B)`（它按目录处理）。
+  单文件用 `fs.copyFile`，只有目录树才用 `robocopy`。
+- **原生 Node 读不了 Git Bash 的 `/tmp`**：`/tmp/lib.json` 会被解析成 `C:\tmp\lib.json` 而 ENOENT。
+  跨 Bash / 原生程序传 JSON 要么用 Windows 绝对路径，要么走 stdin 管道。
+- **启动器的路径协议**（从 `RhineMusic.exe` 的 UTF-16 字符串提取；其字符串**不是** ASCII，直接 `grep` 一无所获）：
+  `RHINE_APP_DIR`（app 目录，内含 `package.json` + `scripts`）、`RHINE_NODE`、`MUSIC_DATA_DIR`、
+  `RHINE_NO_LOG` / `no-log.flag`、`RHINE_AUDIO_EXCLUSIVE`、`RHINE_DIAG_ROOT`。
+  数据目录默认 `<包根>/music-data-v3`，静态根默认 `app/dist`。缺 WebView2 时弹
+  「请安装 Microsoft Edge WebView2 运行时后重试」。**本机已装 WebView2（154.0.4258.53），可直接双击 EXE。**
+- **运行时 `node_modules` 只需 6.74 MB**：`music-server.mjs` 的导入闭包只到 `music-metadata` 与
+  `opencc-js` 及其 13 个传递依赖（`opencc-js` 自身 5.81 MB 是大头）。`three` 不进运行时（已被 vite
+  打进 `dist`）。完整副本 110.5 MB，其余全是构建期依赖。**打包脚本按导入闭包自动计算，不要手写包名列表。**
 - 键盘操作是主要交互：`←/→` 切分类、`↑/↓` 换专辑、`Enter` 打开、`Esc` 返回。
   小白条聚焦后 `Enter/Space` 切换详情⇄歌词、`↑/↓` 取向、`Home/End` 直达两端（已 `stopPropagation`，不会连带换专辑）。
 - 构建产物 / 依赖体积：`node_modules` ≈112MB、`dist` **74MB / 175 个文件（2026-10-06 实测）**，均不入库。
@@ -223,13 +269,16 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 | esbuild | 0.28.2 |
 | `npx tsc --noEmit` | 通过，退出码 0 |
 | `vite build` | 通过，104 模块（需求 A 时为 97），耗时 ≈2.4–3.5s |
-| 新增检查脚本 | `check-music-lyrics`（解析/档案/服务端读取/样式契约）与 `check-music-lyrics-api`（真实扫描 + 真实路由端到端）均通过 |
+| 新增检查脚本 | `check-music-lyrics`（解析/档案/服务端读取/**样式与接线契约**）与 `check-music-lyrics-api`（真实扫描 + 真实路由端到端）均通过；**本版又加 `check-music-online`（线上补录全分支：命中装配/近失不采用/全部不可达/12s 预算/限流重试/熔断落盘并跨实例生效/缓存命中/TTL 过期/身份指纹/只访问白名单主机）与 `check-music-online-api`（门控应答、未知专辑 404、畸形 id 不进解析器）**，两者均通过 |
 | 开发服务器 | `http://127.0.0.1:<port>` 返回 HTTP 200；`/src/music-app.ts`、`/src/music.css` 转译正常 |
-| `app/dist` 回灌 | `robocopy /MIR` 成功（复制 48 / 清除 5 个过期哈希资产 / 失败 0），回灌后 **175 个文件与 playground 构建逐文件 MD5 一致**；`index.html` 已指向新哈希 `index-Cw5FAImN.js` |
+| `app/dist` 回灌 | `robocopy /MIR` 成功（复制 8 / 清除 3 个过期哈希资产 / 失败 0），回灌后 **175 个文件与 playground 构建逐文件 MD5 一致**；`index.html` 已指向新哈希 `index-Dx5c5WkF.js` |
 | 真实曲库规模 | **79 张专辑 / 774 首曲目**，音乐根 `C:\Users\徐梓烽\Music\Music` |
 | **歌词覆盖率（真实全库 774 首逐首请求，0 失败，15.9s ≈ 20ms/首）** | 内嵌同步 SYLT **417（53.9%）**、无歌词 286（37.0%）、同名 `.lrc` **54（7.0%）**、内嵌非同步 USLT **17（2.2%）** → **63.1% 的曲目有歌词，其中 60.9% 可逐字同步** |
 | 真实 `.lrc` 通道实测 | `Natural.flac`（配同名 `.lrc`）→ `{"source":"lrc","text":"\r\n[00:00.00]Natural - Imagine Dragons\r\n..."}`；该 `.lrc` 为 CRLF + 首行空行，解析正确 |
 | 真实 SYLT 通道实测 | 周杰伦《爱情悬崖》等 417 首 → `{"source":"sylt","sync":[{"text":"爱情悬崖 - 周杰伦 (Jay Chou)","timestamp":0},...]}` |
+| **线上补录覆盖度（真实全库 79 张逐张联网）** | **命中 39（49.4%）/ 未找到 40 / 报错 0**，163.7s（平均 2.07s/张）。来源贡献：MusicBrainz 39 张、Apple Music 商店 1 张、维基百科 **0 张**（本机 DNS 污染）。熔断让它只付出 1 次超时 |
+| **`GET /api/album-online/:id` 包内实测** | 无 `consent` → `{"status":"disabled",reason:…}`；带 `consent=1` → `{"status":"ok", fingerprint:"八度空间\|周杰伦\|2002", 发行背景 + 线上首次发行 2002-07-18 + 匹配度 11/11 + MusicBrainz 来源(CC0+链接)}`；未知专辑 404；`..%2F..%2Fconfig.json` 404 |
+| **分发包（`v0.3.0-local.1`）验证** | 515.0 MB（基座 778 MB）。包内 `runtime/node.exe` 起 `app/scripts/music-server.mjs`：静态首页 HTTP 200 且引用新哈希、`/api/library` 返回真实 79 张、两个新接口正确、歌词接口返回 SYLT 逐字同步 → **裁剪后的 15 包闭包（6.74 MB）完整可用**。`RhineMusic.exe` 从 Bash 侧启动后起在 `127.0.0.1:5175/5176` 并生成 14 MB 的 WebView2 配置目录 → **WebView2 外壳确实初始化成功** |
 | 浏览器零拷贝验证 | Edge 154.0.4258.53，`--user-data-dir` 独立配置；缓存中检出 `audioUrl`/`albumId`/`relativePath`（已拉真实曲库）、`detail-switch`（新 CSS 已载入）、`api/lyrics`（新 JS 已载入），确认运行的是 B/C/D 构建 |
 | `--remote-debugging-port` | **本机不可用**（9222 无监听，疑策略限制）→ CDP 自动化不可行；改用窗口内 `F12` |
 
@@ -247,3 +296,9 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 | 2026-10-06 | **零拷贝真机验证回路建立并跑通**：复制真实曲库数据到 `playground/rhine-music-local-mod-data`（415 文件/119MB），从 Bash 侧起 `music-server.mjs --port 5173`，用独立配置目录的 Edge 154 打开；对真实全库 774 首逐首请求 `/api/lyrics/:id`，实测覆盖率与各来源通道 | 真机验收是最后一道关卡；浏览器窗口有真实 GPU 与 DevTools，足以验收 A/B/C/D 的界面与动效，无需先造 660MB 分发副本 |
 | 2026-10-06 | 登记四条本机环境约束：服务启动期全库重扫会让在途请求返回 HTTP 000（`requestTimeout=30s`）；PowerShell `Start-Process` 起的控制台进程随工具调用结束而消失；`-RedirectStandardOutput` 必然报 `Path`/`PATH` 重复键；PowerShell 侧监听端口对 Bash 不可达；Edge `--remote-debugging-port` 本机不生效 | 这些都是"命令成功但结果不对"的静默陷阱，不写下来下次必然重踩 |
 | 2026-10-06 | 清理两处已核验冗余（释放 351.2MB）：`playground/rhine-music-local-mod-app`（与 `app/dist` 175 文件逐字节相同）、`rhine-music-windows/dist-installer-v18` 下两个 0.4.5 安装包（MD5 与 `releases/rhine-music-windows/v0.4.5/` 一致，该归档含两个 exe + 发布说明 + 使用说明）；保留 `latest.yml`/`.blockmap`/`builder-debug.yml` | 按"交付物一处存放"原则收回重复；删掉 playground 那份还使下次 `vite build` 落入干净目录，不再触发删除钩子 |
+| 2026-10-06 | **需求 C 精修（小白条"精美 + 优雅"）**：`music-lyrics-switch.css` 重写为三层光学堆叠（halo 132×44 blur9/.20、glow 84×24 blur4/.34、core 52×8 双段渐变 + 镜面高光/.50）；新增 4 组关键帧 `switch-float`(3.8s ±1.6px)/`switch-drift`(4.6s ±2px)/`switch-breathe`(7.4s ±2.8px + scale .97→1.05)/`switch-glint`(6.6s 16px 掠光)，**周期与初始相位全部错开**；hover 改 `scale 1.06 1.25` 且只提亮外两层；锁定由 `animation: none` 改为 `animation-play-state: paused`（消除点击帧跳变）；`:focus-visible` 焦点环画在胶囊体上；`music-detail-switch.ts` 增加速度采样（指数平滑 + dt 夹取 8–200ms）与 `releaseTarget()` 甩动判定（阈值 1.1 / 上限 2.6） | 初版单层 + 单关键帧观感廉价，且 hover 幅度突变；三层同周期会显出"打拍子"的机械感，必须错开周期与相位；`none` 会让光晕瞬间归位、点击可见跳变 |
+| 2026-10-06 | **补全需求 B 的第四层来源：线上补录**。新增 `app/scripts/album-online.mjs`（`AlbumOnlineResolver`：白名单主机、6s/2.5s/12s 三级超时、1100ms 礼貌间隔、打分阈值 `score>=8`/11、磁盘缓存 TTL 30 天、连接类失败熔断 30 分钟并落盘 `_breakers.json`、429/503 单次退避重试、按**计划**顺序确定性装配）；`music-server.mjs` 新增 `GET /api/album-online/:id`（`?consent=1` 手动通道 / `onlineEnabled` 自动通道分离）；`music-archive.ts` 溯源由 3 层扩为 4 层（人工 → 线上 → 资料库 → 派生）并新增 `status:"online"`、未命中来源逐条列原因、只替换 `.album-archive` 子树不重播入场动画；新增 2 个检查脚本并纳入 `check:music` | 用户明确要求"补全此前要求但尚未实现"的这一项；原方案 §3.4 只有人工 + 资料库两层，一张未被任何数据源描述过的专辑无路可走 |
+| 2026-10-06 | **需求 D 工程化收敛**：新增 `scripts/package-windows.mjs`，把 `app/dist`、5 个服务端脚本闭包、15 包 `node_modules` 闭包（6.74 MB，全量 110.5 MB）、`runtime/`、外壳文件、数据目录（排除 `webview2`）、文档与 `启动音乐播放器.bat` 组装为可复现分发包，收尾做逐文件 MD5 校验、不一致即退出码 1；`docs/使用说明-本地修改版.md` 与 `docs/发布说明-v0.3.0-local.1.md` 一并产出 | 交付物必须一次生成、可复现、可校验；手工打包每次都漏文件，且无法回答"这一份和上一份是否一致" |
+| 2026-10-06 | 打包并验证 `releases/rhine-music-local-mod/v0.3.0-local.1/`（515.0 MB，基座 778 MB，省 263 MB）；包内 `runtime/node.exe` 起服务实测：静态首页 200 且引用新哈希 `index-Dx5c5WkF.js`、`/api/library` 返回真实 79 张、`/api/album-online/:id` 门控与命中均正确、歌词接口返回 SYLT 逐字同步；`RhineMusic.exe` 从 Bash 侧启动后监听 127.0.0.1:5175/5176 并生成 14 MB WebView2 配置目录（验证完即删） | 分发副本是唯一能证明"用户双击就能开"的证据；顺带证明裁剪到 15 包的依赖闭包完整可用 |
+| 2026-10-06 | 自检：`tsc --noEmit` 退出码 0；`vite build` 104 模块 / 2.75s 落入干净 playground；`robocopy /MIR` 回灌 `app/dist`（复制 8 / 清除 3 个过期哈希资产），**175 个文件逐文件 MD5 全部一致**；`check:music` 12 脚本中 10 通过、2 失败（均为已登记的基线既有缺陷，与本次改动无关）；产物令牌核查 `detail-switch-halo`(9)/`switch-breathe`(2)/`switch-glint`(2)/`archive-actions`(2)/`archive-online-status`(2)/`animation-play-state`(2)/JS `online-album`(3)/`online-library`(2)/`consent`(1)/`dragVelocity`(6)/`releaseTarget`(2) 全部落地，旧 CSS 令牌计数为 0 | 交付前必须自证"改的代码真的进了产物"，而不是只看源码 |
+| 2026-10-06 | 登记线上层的实测结论与三条新环境约束（§6「线上补录的四条实测事实」与「`robocopy` 不能复制单个文件」「原生 Node 读不了 Git Bash 的 `/tmp`」，另见 §6.1）：`robocopy` **不能**复制单个文件（源按目录处理，报错 123）；原生 Windows Node **读不了** Git Bash 的 `/tmp`（解析成 `C:\tmp\`）；`rm` 日志文件会触发安全删除钩子（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`） | 三条都是"命令成功但结果不对"或"无谓卡住"的陷阱 |

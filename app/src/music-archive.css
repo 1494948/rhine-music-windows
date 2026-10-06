@@ -55,6 +55,12 @@
   color: var(--muted);
 }
 
+/* A live supplement is the one provenance worth flagging: the text came off the
+   network just now and the reader may want to check it. */
+.album-archive[data-status="online"] .archive-status {
+  border-color: var(--accent);
+}
+
 .archive-lead {
   font-size: 13px;
   line-height: 1.78;
@@ -165,6 +171,44 @@
   margin: 0;
   padding-left: 11px;
   border-left: 1px solid var(--line);
+}
+
+/* Sources that answered nothing. Muted and indented so it never reads as
+   another citation list — it is the receipt for a failed question. */
+.archive-unanswered li span {
+  color: var(--muted);
+}
+
+.archive-unanswered small {
+  opacity: 0.82;
+}
+
+/* The panel's own control row: the only button in this block, and the only
+   place the reader can ask for a supplement. */
+.archive-actions {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px 18px;
+  padding-top: 15px;
+  border-top: 1px solid var(--line);
+}
+
+.archive-actions .text-button {
+  font-size: 10px;
+}
+
+.archive-online-status {
+  flex: 1 0 100%;
+  font-size: 10px;
+  line-height: 1.85;
+  color: var(--muted);
+  margin: 0;
+}
+
+/* An empty status line must not leave a gap behind. */
+.archive-online-status:empty {
+  display: none;
 }
 
 /* Narrow layouts read the archive as a single column, like the facts table. */
