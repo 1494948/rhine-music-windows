@@ -327,7 +327,32 @@
   /* A display surface, not a target: nothing here should swallow a gesture. */
   pointer-events: none;
   will-change: transform, opacity;
-  --line-h: 52px;
+  /* ---------------------------------------------------------------- 可调参数
+     Everything below is driven by the 「歌词」 settings module (src/lyrics-settings.ts),
+     which writes these custom properties on this element. The defaults here are the
+     shipped look, so the pane is correct even if the settings module never runs.
+     `--p` is the exception: it is written per frame by LyricsPane.paintKaraoke. */
+  --line-h: var(--ly-pitch, 52px);
+  /* Type */
+  --ly-size: 17px;
+  --ly-color: var(--ink);
+  --ly-accent: var(--accent);
+  /* Idle lines are set at a fraction of the singing line's size — this is what
+     gives the stack its depth. AMLL exposes the same idea as `bg-line-scale`
+     (its default is 0.7); ours is gentler because the pane sits next to body copy. */
+  --ly-idle-size: 0.92;
+  /* Karaoke */
+  --ly-fade: 0.5;
+  --ly-unsung: 0.62;
+  /* Optics. Blur has no token here: a `blur(0px)` still forces a filter layer,
+     so the renderer has to choose `none` for the singing line and can only do
+     that in script. It scales the value it writes to `--blur` per line instead. */
+  --ly-dim: 1;
+  --ly-glow-size: 0px;
+  --ly-glow-color: transparent;
+  /* Idle float of the singing line */
+  --ly-float: 3px;
+  --ly-float-period: 5.4s;
 }
 
 .music-app[data-layout="desktop"] .music-lyrics,
@@ -398,42 +423,67 @@
   height: var(--line-h);
   display: flex;
   align-items: center;
-  font-size: clamp(15px, 1.5vw, 20px);
+  /* One size for the singing line, a slightly smaller one for everything else.
+     This is AMLL's depth cue expressed as type size rather than a transform, so
+     glyphs stay crisp at every tier. Both come from the settings module. */
+  font-size: calc(var(--ly-size, 17px) * var(--ly-idle-size, 0.92));
   line-height: 1.32;
-  color: var(--ink);
-  /* Distance from the singing line sets opacity, blur and emphasis. The
-     controller writes only `data-d` and `--blur`, once per line change. */
+  color: var(--ly-color, var(--ink));
+  /* Distance from the singing line sets opacity and blur. The controller writes
+     only `data-d` and `--blur`, once per line change — never per frame. */
   filter: var(--blur, none);
-  opacity: 0.14;
+  opacity: calc(0.14 * var(--ly-dim, 1));
   scale: 1;
+  translate: 0 0;
   transform-origin: left center;
-  transition: opacity 300ms ease, scale 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 300ms ease, font-size 420ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Four distance tiers from the singing line. The base value is the `far` tier
    as well, which covers lines mounted before the first clock tick. */
 .lyric-line[data-d="far"] {
-  opacity: 0.14;
+  opacity: calc(0.14 * var(--ly-dim, 1));
 }
 
 .lyric-line[data-d="mid"] {
-  opacity: 0.3;
+  opacity: calc(0.34 * var(--ly-dim, 1));
+  --ly-idle-size: 0.95;
 }
 
 .lyric-line[data-d="near"] {
-  opacity: 0.56;
+  opacity: calc(0.62 * var(--ly-dim, 1));
+  --ly-idle-size: 0.97;
 }
 
+/* The singing line: full size, full strength, a hair of scale, and an idle
+   float. The float starts and ends at offset 0, so handing the animation from
+   one line to the next never shows a jump. */
 .lyric-line[data-d="0"] {
   opacity: 1;
-  scale: 1.04;
+  scale: 1.035;
+  font-size: var(--ly-size, 17px);
+  animation: lyric-float var(--ly-float-period, 5.4s) ease-in-out infinite;
+  filter: var(--blur, none)
+    drop-shadow(0 0 var(--ly-glow-size, 0px) var(--ly-glow-color, transparent));
+}
+
+@keyframes lyric-float {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  50% {
+    translate: 0 calc(var(--ly-float, 3px) * -1);
+  }
 }
 
 /* Unsynced lyrics are a reading view: everything legible, nothing emphasised. */
 .music-lyrics.lyrics-unsynced .lyric-line {
-  opacity: 0.76;
+  opacity: calc(0.76 * var(--ly-dim, 1));
   filter: none;
   scale: 1;
+  font-size: var(--ly-size, 17px);
+  animation: none;
 }
 
 .lyric-main,
@@ -445,33 +495,35 @@
   overflow-wrap: anywhere;
 }
 
-/* The karaoke layer: an accent copy clipped to the sweep position. Clipping
-   paints nothing new, so the per-frame cost is one property write. */
+/* The unsung part of the singing line reads at reduced strength, so the sweep
+   has something to brighten against. */
+.lyric-line[data-d="0"] .lyric-main {
+  opacity: var(--ly-unsung, 0.62);
+  transition: opacity 260ms ease;
+}
+
+/* The karaoke layer: an accent copy revealed by a soft-edged mask. The feather
+   is `wordFadeWidth` in AMLL's terms — a multiple of the font size, 0.5 being
+   its iPad default — so the edge scales with the type instead of sitting on a
+   fixed pixel ramp. A mask paints nothing new, so the per-frame cost stays one
+   property write. */
 .lyric-fill {
   position: absolute;
   inset: 0;
   display: flex;
   align-items: center;
-  color: var(--accent);
-  clip-path: inset(0 calc((1 - var(--p, 0)) * 100%) 0 0);
-}
-
-/* A one-pixel rule under the singing line gives the sweep a second, quieter
-   readout that stays legible when the line is long. */
-.lyric-line[data-d="0"]::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  bottom: 7px;
-  width: 100%;
-  height: 1px;
-  background: var(--line);
-  transform: scaleX(var(--line-p, 0));
-  transform-origin: left center;
-}
-
-.music-lyrics.lyrics-unsynced .lyric-line[data-d="0"]::after {
-  display: none;
+  color: var(--ly-accent, var(--accent));
+  --ly-fade-px: calc(var(--ly-size, 17px) * var(--ly-fade, 0.5));
+  -webkit-mask-image: linear-gradient(
+    90deg,
+    #000 calc(var(--p, 0) * 100% - var(--ly-fade-px) / 2),
+    rgba(0, 0, 0, 0) calc(var(--p, 0) * 100% + var(--ly-fade-px) / 2)
+  );
+  mask-image: linear-gradient(
+    90deg,
+    #000 calc(var(--p, 0) * 100% - var(--ly-fade-px) / 2),
+    rgba(0, 0, 0, 0) calc(var(--p, 0) * 100% + var(--ly-fade-px) / 2)
+  );
 }
 
 .lyrics-note {
@@ -490,4 +542,5 @@
 
 .music-lyrics.reduce-motion .lyric-line {
   transition: none;
+  animation: none;
 }

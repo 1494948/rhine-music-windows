@@ -3,7 +3,7 @@ import {
   getNativePlayback,
   resolveTrackUrl,
   type NativePlaybackClient,
-} from "./native-playback";
+} from "./native-playback.ts";
 
 export interface MusicPlayerState {
   transport: "idle" | "loading" | "playing" | "paused" | "error";

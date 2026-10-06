@@ -399,6 +399,9 @@ export class ArchiveScene {
       this.scene.add(inst);
     }
     this.covers = new CoverAtlas(count, this.renderer.capabilities.maxTextureSize, this.renderer.capabilities.getMaxAnisotropy(), this.selectionLighting, this.poolRows);
+    // Lets a tile paint upload just its own rectangle instead of the whole
+    // 21 MB atlas surface; see CoverAtlas.attachRenderer.
+    this.covers.attachRenderer(this.renderer);
     this.scene.add(this.covers.array);
     this.model.add(this.covers.selected);
     if (!musicLibrary) {

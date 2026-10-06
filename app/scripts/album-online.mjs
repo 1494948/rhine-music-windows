@@ -27,7 +27,7 @@
 
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
-import { AlbumIntroductionProvider, normalizeName } from './album-introductions.mjs'
+import { normalizeName } from './album-introductions.mjs'
 
 export const ONLINE_TTL_MS = 30 * 86400_000
 export const MAX_BLOCK_BYTES = 4000
@@ -39,12 +39,38 @@ export const BREAKER_MS = 30 * 60_000
 const APP_UA = 'RhineLocalMusic/0.3 (personal local music library; metadata display only)'
 const ISO = () => new Date().toISOString()
 
-/** Hosts we are willing to talk to, for documentation and validation. */
+/**
+ * Hosts we are willing to talk to, for documentation and validation.
+ *
+ * Verified reachable from a mainland China residential line on 2026-10-06, with
+ * an album-worthy payload, and no key or account:
+ *   musicbrainz.org  MusicBrainz (49.4% of the author's library)
+ *   c.y.qq.com       QQ 音乐   (48.1%, and the only source with long Chinese prose)
+ *   baike.baidu.com  百度百科   (41.8%, best on canonical albums; the open API
+ *                               works even though the item pages return 403)
+ *   itunes.apple.com Apple Music 商店 (Western catalogues only; see itunes())
+ *
+ * Deliberately absent: zh.wikipedia.org / www.wikidata.org. Wikipedia timed out
+ * on every attempt (DNS interception) and contributed 0 of 79 albums while
+ * costing one timeout per pass; the user's brief was explicit that sources
+ * unusable in China must not be wired in. The item pages of baike return 403 for
+ * non-browser clients — only the documented open API is used.
+ */
 export const PROVIDER_HOSTS = {
+  qq: 'c.y.qq.com',
+  baike: 'baike.baidu.com',
   musicbrainz: 'musicbrainz.org',
   itunes: 'itunes.apple.com',
-  wikipedia: 'wikipedia.org',
 }
+
+/** The public suggestion endpoint: returns an album mid plus the performer. */
+const QQ_SUGGEST = 'https://c.y.qq.com/splcloud/fcgi-bin/smartbox_new.fcg'
+/** Album detail, which carries `desc` (the long Chinese 简介), `aDate` and `company`. */
+const QQ_ALBUM = 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg'
+/** Baidu Baike's documented lemma-card API. */
+const BAIKE_API = 'https://baike.baidu.com/api/openapi/BaikeLemmaCardApi'
+/** Public appid used by Baike's own embeddable lemma card. */
+const BAIKE_APPID = '379020'
 
 const firstString = (value) => (typeof value === 'string' && value.trim() ? value.trim() : '')
 
@@ -69,6 +95,29 @@ function joinStatements(statements) {
   return `${statements.slice(0, -1).join('，')}，${statements[statements.length - 1]}`
 }
 
+/**
+ * Statement slots.
+ *
+ * Two sources routinely assert the *same* thing about the same album: QQ 音乐的
+ * `aDate` and MusicBrainz's `first-release-date` are both "this album came out
+ * on D". Concatenating them produced 「公开条目记录其发行于 2025 年 3 月 14 日，
+ * 由 某唱片 发行，公开条目记录其首次发行于 2025 年 3 月 14 日」 — one date said
+ * twice, in two voices. A statement therefore declares which dimension it speaks
+ * to, and the assembly keeps the first statement per slot. The full field-level
+ * detail is never lost: every provider's facts are kept verbatim, and a real
+ * disagreement still surfaces through 年份差异.
+ */
+const STATEMENT_SLOTS = {
+  /** When the album came out. QQ 音乐 and MusicBrainz speak to this one. */
+  release: 'release',
+  /** Who released it. */
+  label: 'label',
+  /** A storefront's own on-sale date, which is not the first release. */
+  storeDate: 'store-date',
+  storeGenre: 'store-genre',
+  storeTracks: 'store-tracks',
+}
+
 /** 2001-09-14 -> 2001 年 9 月 14 日; partial dates degrade gracefully. */
 function humanDate(value) {
   const text = firstString(value)
@@ -80,11 +129,43 @@ function humanDate(value) {
   return `${year} 年 ${Number(month)} 月 ${Number(day)} 日`
 }
 
+/**
+ * A local library's album titles carry the packaging, not the album: 「燕尾蝶<
+ * 下定爱的决心>」, 「我好吗? - 太阳如常升起」, 「爱的大游行Live全记录 (Live)」.
+ * The online sources index the album itself, so the decorations are stripped and
+ * the result plus each `/`-separated half is offered, capped at two variants so a
+ * lookup can never fan out.
+ *
+ * Measured on the author's library: this alone recovered 「燕尾蝶」 (4569 字) and
+ * 「15 Khalil Fong Live in Hong Kong 2011」, both of which the raw title missed.
+ */
+export function titleVariants(title) {
+  const cleaned = String(title)
+    .replace(/\s*[-–—]\s*(single|ep|album|live)\s*$/i, '')
+    .replace(/\s*[\[(（【]\s*(live|single|ep|remaster(ed)?|deluxe|特别版|限量版|典藏版|精选)[^\])）】]*[\])）】]\s*$/i, '')
+    .replace(/\s*<[^>]*>\s*$/, '')
+    .trim()
+  const out = []
+  for (const value of [cleaned, ...cleaned.split('/').map((part) => part.trim())])
+    if (value && !out.includes(value)) out.push(value)
+  return out.slice(0, 2)
+}
+
+/** Title / performer agreement, weighted the same way MusicBrainz is scored. */
+function creditTokens(artist) {
+  const text = firstString(artist)
+  if (!text || /未知艺术家|群星|various artists/i.test(text)) return []
+  return text
+    .split(/[、,&/]|\s*feat\.?\s*|\s*ft\.?\s*/i)
+    .map((part) => normalizeName(part))
+    .filter(Boolean)
+}
+
 /** Resolves to a provider outcome once the limit passes, without cancelling. */
 function withDeadline(promise, ms, id, label) {
   return Promise.race([
     promise,
-    new Promise((resolve) => setTimeout(() => resolve({ status: 'failed', detail: `超出 ${Math.round(ms / 1000)} 秒预算，已放弃` , id, label }), ms)),
+    new Promise((resolve) => setTimeout(() => resolve({ status: 'failed', detail: `超出 ${Math.round(ms / 1000)} 秒预算，已放弃`, id, label }), ms)),
   ])
 }
 
@@ -120,8 +201,8 @@ function isConnectFailure(error) {
 /**
  * Resolves one album's online supplement.
  *
- * `fetcher`, `introProvider` and `clock` are injectable so the check script can
- * drive every branch without touching the real network.
+ * `fetcher` is injectable so the check script can drive every branch without
+ * touching the real network.
  */
 export class AlbumOnlineResolver {
   constructor({
@@ -129,7 +210,6 @@ export class AlbumOnlineResolver {
     fetcher = globalThis.fetch,
     intervalMs = 1100,
     requestTimeoutMs = 6000,
-    wikiTimeoutMs = 2500,
     budgetMs = OVERALL_BUDGET_MS,
     retryDelayMs = 1500,
     cacheDir,
@@ -142,13 +222,11 @@ export class AlbumOnlineResolver {
     this.retryDelayMs = retryDelayMs
     this.contact = undefined
     this.gates = {
+      qq: new Gate(intervalMs),
+      baike: new Gate(intervalMs),
       musicbrainz: new Gate(intervalMs),
       itunes: new Gate(intervalMs),
-      wikipedia: new Gate(intervalMs),
     }
-    // A short timeout is deliberate here: a reachable Wikipedia answers in well
-    // under a second, so anything slower is a network problem, not patience.
-    this.intro = new AlbumIntroductionProvider({ fetcher, intervalMs, timeoutMs: wikiTimeoutMs, contact: () => this.contact })
     this.memory = new Map()
     this.breaker = new Map()
     this.breakerLoaded = false
@@ -297,7 +375,7 @@ export class AlbumOnlineResolver {
     const firstDate = String(group['first-release-date'] ?? '')
     if (firstDate) {
       facts.push({ label: '线上首次发行', value: humanDate(firstDate) })
-      statements.push(`公开条目记录其首次发行于 ${humanDate(firstDate)}`)
+      statements.push({ slot: STATEMENT_SLOTS.release, text: `公开条目记录其首次发行于 ${humanDate(firstDate)}` })
     }
     const onlineYear = Number(firstDate.slice(0, 4))
     if (album.year && onlineYear && onlineYear !== Number(album.year)) {
@@ -383,15 +461,15 @@ export class AlbumOnlineResolver {
       const statements = []
       if (item.releaseDate) {
         facts.push({ label: '商店发行日期', value: humanDate(item.releaseDate) })
-        statements.push(`商店记录的上架日期为 ${humanDate(item.releaseDate)}`)
+        statements.push({ slot: STATEMENT_SLOTS.storeDate, text: `商店记录的上架日期为 ${humanDate(item.releaseDate)}` })
       }
       if (item.primaryGenreName) {
         facts.push({ label: '商店流派', value: item.primaryGenreName })
-        statements.push(`商店归类为 ${item.primaryGenreName}`)
+        statements.push({ slot: STATEMENT_SLOTS.storeGenre, text: `商店归类为 ${item.primaryGenreName}` })
       }
       if (Number(item.trackCount) > 0) {
         facts.push({ label: '商店收录曲目', value: `${item.trackCount} 首` })
-        statements.push(`商店记录收录 ${item.trackCount} 首曲目`)
+        statements.push({ slot: STATEMENT_SLOTS.storeTracks, text: `商店记录收录 ${item.trackCount} 首曲目` })
       }
       if (item.copyright) facts.push({ label: '版权声明', value: clip(item.copyright, 160) })
       return {
@@ -416,29 +494,127 @@ export class AlbumOnlineResolver {
     }
   }
 
-  /** Wikipedia prose. The only real prose source, and strictly best-effort. */
-  async wikipedia(album) {
-    let result
-    try {
-      result = await this.intro.lookup({ title: album.title, artist: album.artist, year: album.year })
-    } catch (error) {
-      throw error
-    }
-    if (result?.status === 'matched' && result.description && result.descriptionSource?.url) {
+  /**
+   * QQ 音乐. Two calls: the public suggestion endpoint gives an album mid and the
+   * performer, then the album detail endpoint gives a long Chinese 简介 plus the
+   * release date, the label and the track count.
+   *
+   * The mid comes from a suggestion list rather than a search page, so the match
+   * is verified twice — title and performer must agree in the suggestion, and the
+   * detail's own `name` must agree again. A wrong mid answers with a different
+   * album or with nothing, which is how the guard was validated: hand it a wrong
+   * mid and it returns empty rather than someone else's album.
+   */
+  async qq(album) {
+    const wantedArtist = creditTokens(album.artist)
+    for (const variant of titleVariants(album.title)) {
+      const suggest = new URL(QQ_SUGGEST)
+      suggest.search = new URLSearchParams({ key: variant, format: 'json', g_tk: '5381' }).toString()
+      let list
+      try {
+        const data = await this.request(suggest, 'qq')
+        list = Array.isArray(data?.data?.album?.itemlist) ? data.data.album.itemlist : []
+      } catch (error) {
+        if (variant === titleVariants(album.title)[0]) throw error
+        continue
+      }
+      const wanted = normalizeName(variant)
+      const best = list
+        .map((item) => {
+          const name = normalizeName(item?.name ?? '')
+          const singer = normalizeName(Array.isArray(item?.singer) ? item.singer.join('') : (item?.singer ?? ''))
+          let score = 0
+          if (name && name === wanted) score += 5
+          else if (name && (name.includes(wanted) || wanted.includes(name))) score += 2
+          if (wantedArtist.some((token) => singer.includes(token))) score += 4
+          return { item, score }
+        })
+        .sort((a, b) => b.score - a.score)[0]
+      // Below 2 there is no agreement at all: the suggestion list is ranked by
+      // popularity, so an unguarded first row would happily return a hit song.
+      if (!best || best.score < 2 || !best.item?.mid) continue
+
+      const detail = new URL(QQ_ALBUM)
+      detail.search = new URLSearchParams({ albummid: String(best.item.mid), format: 'json', g_tk: '5381' }).toString()
+      const data = await this.request(detail, 'qq')
+      const record = data?.data ?? {}
+      const got = normalizeName(record.name ?? '')
+      if (!got || !(got === wanted || got.includes(wanted) || wanted.includes(got)))
+        return { status: 'empty', detail: `详情返回的是《${firstString(record.name) || '未知'}》，与《${album.title}》不符` }
+
+      const facts = []
+      const statements = []
+      if (firstString(record.aDate)) {
+        facts.push({ label: '线上发行日期', value: humanDate(record.aDate) })
+        statements.push({ slot: STATEMENT_SLOTS.release, text: `公开条目记录其发行于 ${humanDate(record.aDate)}` })
+      }
+      if (firstString(record.company)) {
+        facts.push({ label: '唱片公司', value: firstString(record.company) })
+        statements.push({ slot: STATEMENT_SLOTS.label, text: `由 ${firstString(record.company)} 发行` })
+      }
+      const tracks = Array.isArray(record.list) ? record.list.length : 0
+      if (tracks > 0) facts.push({ label: '线上收录曲目', value: `${tracks} 首` })
+
+      const desc = firstString(record.desc)
+      if (!desc && !facts.length) return { status: 'empty', detail: '条目没有简介、发行日期或唱片公司' }
       return {
         status: 'ok',
-        prose: clip(result.description),
+        ...(desc ? { prose: clip(desc) } : {}),
+        ...(facts.length ? { facts } : {}),
+        ...(statements.length ? { statements } : {}),
         source: {
-          name: result.descriptionSource.name ?? '维基百科',
-          url: result.descriptionSource.url,
-          license: result.descriptionSource.license ?? 'CC BY-SA（以来源页为准）',
-          checkedAt: result.descriptionSource.checkedAt ?? ISO(),
+          name: 'QQ 音乐',
+          url: `https://y.qq.com/n/ryqq/albumDetail/${encodeURIComponent(String(best.item.mid))}`,
+          license: '内容版权归腾讯音乐娱乐集团及原作者所有（以来源页为准）',
+          checkedAt: ISO(),
         },
       }
     }
-    if (result?.status === 'uncertain') return { status: 'empty', detail: result.error ?? '存在多个候选条目，未自动采用' }
-    if (result?.status === 'error') throw new Error(result.error ?? '来源无法访问')
-    return { status: 'empty', detail: '未找到对应条目' }
+    return { status: 'empty', detail: 'QQ 音乐未找到与本专辑名称、歌手相符的条目' }
+  }
+
+  /**
+   * 百度百科, through its documented open API.
+   *
+   * The API resolves a keyword to one lemma and gives no disambiguation handle,
+   * so the abstract has to be vetted: 「叶惠美」 answers with the person and
+   * 「丝路」 with the Silk Road. Measured false positives on the author's library
+   * were the reason for the three-part guard — the album's own 《》 title, a
+   * release verb, and the performer's name — all of which the wrong lemmas fail.
+   *
+   * There is no fallback query shape that helps: 「X 专辑」, 「X（专辑）」 and
+   * 「X + 歌手」 were all tried and returned the same wrong lemma, because the
+   * suffix is normalised away before the lookup.
+   */
+  async baike(album) {
+    const title = firstString(album.title)
+    if (!title) return { status: 'empty', detail: '专辑名称为空' }
+    const url = new URL(BAIKE_API)
+    url.search = new URLSearchParams({
+      scope: '103',
+      format: 'json',
+      appid: BAIKE_APPID,
+      bk_key: title,
+      bk_length: '1200',
+    }).toString()
+    const data = await this.request(url, 'baike')
+    const abstract = firstString(data?.abstract)
+    if (!abstract) return { status: 'empty', detail: '百科没有该词条或没有摘要' }
+    if (!abstract.includes(`《${title}》`) || !/发行|收录|推出/.test(abstract))
+      return { status: 'empty', detail: `词条不是本专辑：「${abstract.slice(0, 36)}…」` }
+    const tokens = creditTokens(album.artist)
+    if (tokens.length && !tokens.some((token) => normalizeName(abstract).includes(token)))
+      return { status: 'empty', detail: `词条讲的是《${title}》但没有提到 ${album.artist}` }
+    return {
+      status: 'ok',
+      prose: clip(abstract),
+      source: {
+        name: '百度百科',
+        url: `https://baike.baidu.com/item/${encodeURIComponent(title)}`,
+        license: '内容版权归百度百科及词条贡献者所有（以来源页为准）',
+        checkedAt: ISO(),
+      },
+    }
   }
 
   /**
@@ -478,16 +654,25 @@ export class AlbumOnlineResolver {
       }
     }
 
-    // Concurrent: each provider has its own gate, and the slow one (Wikipedia on
-    // a broken network) must not serialise behind the fast ones.
+    // Concurrent: each provider has its own gate, and the slowest must not
+    // serialise behind the fastest. Order is the assembly order, not the
+    // execution order — see the comment below.
     const plan = [
+      ['qq', 'QQ 音乐', () => this.qq(album)],
+      ['baike', '百度百科', () => this.baike(album)],
       ['musicbrainz', 'MusicBrainz', () => this.musicbrainz(album)],
-      ['itunes', 'Apple Music 商店', () => this.itunes(album)],
-      ['wikipedia', '维基百科', () => this.wikipedia(album)],
     ]
     const settled = await Promise.all(
       plan.map(([id, label, task]) => run(id, label, task)),
     )
+    // Apple Music is held back to a second phase. Measured on this library it
+    // contributed 1 of 39 hits while its Chinese search returns unrelated rows
+    // (searching 《范特西》 returned 2CELLOS and a piano compilation), so it stays
+    // available for Western catalogues without spending a request on every album.
+    // Only a clean sweep of "all three ran and found nothing" triggers it: a
+    // failed or skipped provider means the network is the problem, not coverage.
+    if (settled.every((entry) => entry.status === 'empty'))
+      settled.push(await run('itunes', 'Apple Music 商店', () => this.itunes(album)))
 
     // Assembled in `plan` order, not in completion order: providers answer in
     // whatever order the network gives, but the same album must not read back as
@@ -501,18 +686,30 @@ export class AlbumOnlineResolver {
     const facts = []
     const sources = []
     const statements = []
+    /** First statement per slot wins; see STATEMENT_SLOTS for why. */
+    const filledSlots = new Set()
     let prose = ''
     let proseSource
     for (const entry of settled) {
       const outcome = entry.outcome
       if (!outcome) continue
-      if (outcome.facts?.length) facts.push(...outcome.facts)
-      if (outcome.source) sources.push(outcome.source)
-      if (outcome.statements?.length) statements.push(...outcome.statements)
-      if (outcome.prose && !prose) {
+      const usesProse = Boolean(outcome.prose) && !prose
+      if (usesProse) {
         prose = outcome.prose
         proseSource = outcome.source
       }
+      if (outcome.facts?.length) facts.push(...outcome.facts)
+      if (outcome.statements?.length)
+        for (const statement of outcome.statements) {
+          if (filledSlots.has(statement.slot)) continue
+          filledSlots.add(statement.slot)
+          statements.push(statement.text)
+        }
+      // A source is credited only when its content actually reached the panel. A
+      // prose-only provider that lost the race would otherwise be listed as a
+      // source of a paragraph it did not contribute.
+      if (outcome.source && (usesProse || outcome.facts?.length || outcome.statements?.length))
+        sources.push(outcome.source)
     }
 
     const blocks = []
@@ -538,12 +735,24 @@ export class AlbumOnlineResolver {
       facts,
       sources,
       providers,
+      // Two different "nothing to show" states, with two different answers:
+      //   * every source unreachable -> 'error', and the reason is the transport
+      //     failure, because there is nothing the reader can do about their tags;
+      //   * some source answered "not found" -> 'empty', and the useful message
+      //     is what would improve the hit rate. A store that errored on the way
+      //     is still named, per provider, in `providers`.
       ...(anything
         ? {}
-        : { error: failed[0]?.detail ?? '公开来源未找到与本地标签可靠对应的条目。补全名称、歌手与年份会显著提高命中率。' }),
+        : {
+            error:
+              failed.length === providers.length
+                ? failed[0]?.detail ?? '公开来源均无法访问。'
+                : '公开来源未找到与本地标签可靠对应的条目。补全名称、歌手与年份会显著提高命中率。',
+          }),
       // Offered even on success: reading the full article is the user's call,
-      // and a search link makes no claim of its own.
-      searchUrl: `https://zh.wikipedia.org/w/index.php?search=${encodeURIComponent(`${album.title} ${album.artist}`)}`,
+      // and a search link makes no claim of its own. A domestic engine, because
+      // the sources above are domestic.
+      searchUrl: `https://www.baidu.com/s?wd=${encodeURIComponent(`${album.title} ${album.artist} 专辑`)}`,
     }
     this.memory.set(fingerprint, payload)
     await this.writeCache(album, payload)

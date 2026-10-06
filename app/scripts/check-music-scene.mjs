@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { setMusicAlbums, records, archiveColumns, columnFiles, fileAtSlot, fileLocation } from '../src/data.ts';
 import { fileAtCell, poolAlbumCapacity, selectionCell, visibleCell, cellKey, LOOP_COLUMNS, LOOP_ROWS, MUSIC_LOOP_ROWS, wrap } from '../src/archive-loop.ts';
-import { containCover } from '../src/cover-atlas.ts';
+import { containCover, atlasSubRectY } from '../src/cover-atlas.ts';
 
 for (const genreCount of [1, 2, 7]) for (const albumCount of [1, 3, 40]) {
   const genres = Array.from({ length: genreCount }, (_, i) => ({ id: `g${i}`, name: `流派 ${i}` }));
@@ -63,4 +63,39 @@ for (const [width, height] of [[1000, 1000], [600, 1000], [1200, 500]]) {
   assert.ok(Math.abs(box.width / box.height - width / height) < 1e-10);
   assert.ok(box.x >= 0 && box.y >= 0 && box.x + box.width <= 1024 && box.y + box.height <= 768);
 }
-console.log('Music scene checks passed: 1/2/7 genres × 1/3/40 albums, bidirectional loops, empty library, uncropped image aspect ratios.');
+
+// --- 图集子矩形上传：位置换算与着色器 UV 的交叉验证 -------------------------
+//
+// A tile paint uploads only its own rectangle now, so the atlas is no longer
+// re-uploaded whole on every cover. That makes one number load-bearing: where
+// the rectangle goes. It is derived from the flipped upload convention, and the
+// shader's UV attribute derives the same place independently, so the two are
+// compared here — a regression in either one would otherwise only show up as
+// every cover displaying the wrong artwork on a real GPU.
+{
+  for (const rows of [1, 2, 5, 8]) {
+    for (const tileHeight of [128, 256]) {
+      const atlasHeight = rows * tileHeight;
+      for (let row = 0; row < rows; row++) {
+        const yoffset = atlasSubRectY(atlasHeight, tileHeight, row * tileHeight);
+        assert.ok(
+          Number.isInteger(yoffset) && yoffset >= 0 && yoffset + tileHeight <= atlasHeight,
+          `row ${row} lands outside the atlas`,
+        );
+        // Where the sub-rect upload writes, normalized with v from the bottom.
+        const uploaded = [yoffset / atlasHeight, (yoffset + tileHeight) / atlasHeight];
+        // Where writeTile points the shader: v origin 1 - (row + 1) / rows, and
+        // a v extent of 1 / rows.
+        const read = [1 - (row + 1) / rows, 1 - row / rows];
+        assert.ok(
+          Math.abs(uploaded[0] - read[0]) < 1e-12 && Math.abs(uploaded[1] - read[1]) < 1e-12,
+          `row ${row} of ${rows}: upload writes v[${uploaded}] but the shader reads v[${read}]`,
+        );
+      }
+    }
+  }
+  // The canvas is uploaded flipped, so canvas row 0 is the texture's last row.
+  assert.equal(atlasSubRectY(512, 256, 0), 256);
+  assert.equal(atlasSubRectY(512, 256, 256), 0);
+}
+console.log('Music scene checks passed: 1/2/7 genres × 1/3/40 albums, bidirectional loops, empty library, uncropped image aspect ratios, flipped atlas sub-rect placement.');

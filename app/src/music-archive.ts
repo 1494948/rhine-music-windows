@@ -316,7 +316,7 @@ export function resolveAlbumArchive(
       // The search link is only worth offering while there is still no prose.
       ...(hasProse || !online.searchUrl ? {} : { searchUrl: online.searchUrl }),
       hint:
-        "线上内容逐条取自公开元数据源并随附出处，与本机缓存 30 天。人工补录（content/album-archives.json）优先级高于线上内容。",
+        "线上内容逐条取自国内可访问的公开元数据源（QQ 音乐 / 百度百科 / MusicBrainz）并随附出处，与本机缓存 30 天。人工补录（content/album-archives.json）优先级高于线上内容。",
     };
   }
 
@@ -423,7 +423,7 @@ export function albumArchiveMarkup(
             : "线上补充详情与背景 ↗"
       }</button>${
         archive.searchUrl
-          ? `<a class="text-button" href="${esc(archive.searchUrl)}" target="_blank" rel="noopener">在维基百科中搜索 ↗</a>`
+          ? `<a class="text-button" href="${esc(archive.searchUrl)}" target="_blank" rel="noopener">在百度搜索更多 ↗</a>`
           : ""
       }<p class="archive-online-status" data-online-feedback="${esc(actions.albumId)}" role="status">${esc(actions.notice ?? "")}</p></div>`
     : "";

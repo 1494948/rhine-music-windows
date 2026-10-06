@@ -93,6 +93,27 @@ function paintCover(
   );
 }
 
+/**
+ * Where a tile's rows land in the atlas texture, for a sub-rectangle upload.
+ *
+ * three.js uploads a canvas with `UNPACK_FLIP_Y_WEBGL` set, so canvas row 0 —
+ * the *top* — becomes the texture's last row. A `texSubImage2D` at an offset
+ * flips only its own block, so a tile has to be placed at the mirrored row:
+ * canvas row `y` maps to texture row `H - 1 - y`, and a block of height `h`
+ * therefore starts at `H - h - y`.
+ *
+ * The existing UV maths in `writeTile` arrives at the same place by another
+ * route — it puts the tile's v-origin at `1 - (row + 1) / rows`, i.e. texture
+ * rows `[H - (row + 1) * h, H - row * h)`, which is exactly `atlasSubRectY` of
+ * canvas row `row * h`. Two independent derivations agreeing is the only
+ * assurance available here, so this is a named function with its own test
+ * rather than an inline expression: getting it wrong moves every cover onto
+ * another album's artwork.
+ */
+export function atlasSubRectY(textureHeight: number, blockHeight: number, canvasY: number) {
+  return textureHeight - blockHeight - canvasY;
+}
+
 /** One fixed-size atlas for the visible pool, regardless of total library size. */
 export class CoverAtlas {
   readonly array: THREE.InstancedMesh;
@@ -133,6 +154,8 @@ export class CoverAtlas {
   private readonly slotCount: number;
   private readonly poolRows: number;
   private readonly atlasAnisotropy: number;
+  /** Set by the scene; without it the atlas can only be re-uploaded whole. */
+  private renderer?: THREE.WebGLRenderer;
 
   constructor(
     count: number,
@@ -224,6 +247,80 @@ export class CoverAtlas {
     this.selected.visible = false;
     this.selected.name = "Selected album cover";
     this.selected.receiveShadow = true;
+  }
+
+  /**
+   * Hand the atlas the renderer, so a tile paint can be uploaded as a
+   * sub-rectangle instead of re-uploading the whole surface.
+   *
+   * `CanvasTexture.needsUpdate = true` re-uploads all of it on the next render
+   * — 4096 x 1280 RGBA, about 21 MB. A genre or lane switch brings a whole shelf
+   * of new albums into the pool, each needing its own upload, so the naive path
+   * measured up to ~48 whole-surface uploads inside one navigation: roughly a
+   * gigabyte of texture traffic, and the reason a switch between two different
+   * styles still stuttered after the tile-keyed atlas removed the scrolling
+   * case. A 256x256 tile is 262 kB, so patching just the changed rectangle is
+   * an ~80x reduction.
+   *
+   * three.js exposes no dirty-rect API for a canvas source, so the tile is
+   * pushed at the live texture with `texSubImage2D`. `atlasCanvas` stays the
+   * source of truth and is still written, so any whole-surface upload — the
+   * first render, a quality change, a grown pool — carries every tile and the
+   * fast path can never make the atlas permanently wrong.
+   */
+  attachRenderer(renderer: THREE.WebGLRenderer) {
+    this.renderer = renderer;
+  }
+
+  /**
+   * Patch one tile rectangle into the live texture.
+   *
+   * Returns false when the caller must fall back to a whole-surface upload: no
+   * renderer, a lost context, or a texture three.js has not uploaded yet (its
+   * `__webglTexture` is only created on first use).
+   */
+  private uploadTile(x: number, y: number) {
+    const renderer = this.renderer;
+    if (!renderer || this.disposed) return false;
+    const handle = (
+      renderer.properties.get(this.atlas) as
+        | { __webglTexture?: WebGLTexture | null }
+        | undefined
+    )?.__webglTexture;
+    if (!handle) return false;
+    // three.js creates a `webgl2` context and nothing else (its own request, and
+    // it throws when the browser cannot supply one), but `getContext()` is typed
+    // as the union of both versions, and on that union the source form of
+    // `texSubImage2D` — the one three.js itself calls — is not declared. It is
+    // declared on `WebGL2RenderingContext`, which is what the context really is.
+    const gl = renderer.getContext() as unknown as WebGL2RenderingContext;
+    if (gl.isContextLost()) return false;
+    // Exactly the pixel-store state three.js sets before it uploads an sRGB
+    // canvas, so a patched rectangle is byte-identical to one a whole-surface
+    // upload would have written. It re-sets all four on every upload
+    // (`uploadTexture`), so leaving them behind is safe.
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 0);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
+    // Bound through three.js' own state cache rather than with a raw
+    // `gl.bindTexture`: a raw bind leaves the cache believing some other
+    // texture is still on this unit, and the next draw would then reuse it.
+    renderer.state.bindTexture(gl.TEXTURE_2D, handle);
+    // WebGL2's source form: the source is already exactly tile-sized, so asking
+    // for that size is a no-op scale rather than a resample.
+    gl.texSubImage2D(
+      gl.TEXTURE_2D,
+      0,
+      x,
+      atlasSubRectY(this.atlasCanvas.height, this.tileHeight, y),
+      this.tileWidth,
+      this.tileHeight,
+      gl.RGBA,
+      gl.UNSIGNED_BYTE,
+      this.tileCanvas,
+    );
+    return true;
   }
 
   private createAtlasTexture() {
@@ -396,10 +493,12 @@ export class CoverAtlas {
       paintCover(this.tileCanvas, record, image);
       const x = (tile % this.columns) * this.tileWidth;
       const y = Math.floor(tile / this.columns) * this.tileHeight;
+      // The atlas canvas is written first and stays authoritative, so the
+      // fallback below is always correct on its own.
       const context = this.atlasCanvas.getContext("2d")!;
       context.clearRect(x, y, this.tileWidth, this.tileHeight);
       context.drawImage(this.tileCanvas, x, y);
-      this.atlas.needsUpdate = true;
+      if (!this.uploadTile(x, y)) this.atlas.needsUpdate = true;
     };
     // A decoded thumbnail paints straight into the tile: one paint, one upload,
     // and no placeholder frame for artwork the session already holds.

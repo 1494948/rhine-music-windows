@@ -11,8 +11,9 @@
 **可用** · 最后更新：2026-10-06
 
 - 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板（四级来源）；需求 C 小白条详情⇄歌词切换（含视觉精修与惯性抛掷）；需求 D 歌词解析/接口/动效面板；**需求 B 的第四层「线上补充专辑详情与背景」已补全并真机实测**；`app/dist` 已回灌为最新构建（175 文件，MD5 校验一致）
-- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.1/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现）
-- 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需你在真实 GPU 下确认**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）。验证环境见第 6 节末的零拷贝回路。需求 C 的 `--switch-top` / `--switch-bottom` 落点、线上补录的命中率（当前 49.4%）都还需按实机与真实曲库继续调
+- **第二轮（2026-10-06）已完成**：需求 A 的第二轮修复（**图集脏矩形上传**，见 §6.2；**详情栏就地增量更新**）；需求 D 新增**「歌词」参数设置模块**（字号/行距/颜色/渐变/浮动/延迟等 11 项，即时生效并持久化）；需求 D 的歌词细线已移除、动效按 AMLL 模型重做（逐字柔边遮罩 + 未唱部分降亮 + 字号纵深 + 辉光）；**线上来源整体替换为国内可访问集合**（QQ 音乐 / 百度百科 / MusicBrainz，实测 4/4 命中，见 §6.3）
+- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.1/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现）。**注意：该包内含第一轮构建，第二轮改动需重新打包后才在其中生效**
+- 待办：**需求 A 的卡顿手感与需求 C/D 的动效表现需你在真实 GPU 下确认**（无浏览器环境无法校验 GPU 上传、拖拽手感与视觉观感）。验证环境见第 6 节末的零拷贝回路。需求 C 的 `--switch-top` / `--switch-bottom` 落点还需按实机继续调。**图集脏矩形上传的上下方向必须目视确认一次**（见 §6.2 的翻转推导；若封面显示错位/镜像，把 `CoverAtlas.uploadTile` 的返回值改成恒 `false` 即回到整面上传）
 
 ## 3. 技术栈与关键依赖
 
@@ -268,10 +269,12 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | vite（lock 实际解析） | 7.3.6 |
 | esbuild | 0.28.2 |
 | `npx tsc --noEmit` | 通过，退出码 0 |
-| `vite build` | 通过，104 模块（需求 A 时为 97），耗时 ≈2.4–3.5s |
-| 新增检查脚本 | `check-music-lyrics`（解析/档案/服务端读取/**样式与接线契约**）与 `check-music-lyrics-api`（真实扫描 + 真实路由端到端）均通过；**本版又加 `check-music-online`（线上补录全分支：命中装配/近失不采用/全部不可达/12s 预算/限流重试/熔断落盘并跨实例生效/缓存命中/TTL 过期/身份指纹/只访问白名单主机）与 `check-music-online-api`（门控应答、未知专辑 404、畸形 id 不进解析器）**，两者均通过 |
+| `vite build` | 通过，**106 模块**（需求 A 时为 97，第一轮后 104），耗时 ≈2.7–3.5s |
+| 新增检查脚本 | `check-music-lyrics`（解析/档案/服务端读取/**样式与接线契约**）与 `check-music-lyrics-api`（真实扫描 + 真实路由端到端）均通过；**线上补录层 `check-music-online`（命中装配/近失不采用/错答拒绝/全部不可达/12s 预算/限流重试/熔断落盘并跨实例生效/缓存命中/TTL 过期/身份指纹/只访问白名单主机/标题清洗）与 `check-music-online-api`（门控应答、未知专辑 404、畸形 id 不进解析器）** 均通过 |
 | 开发服务器 | `http://127.0.0.1:<port>` 返回 HTTP 200；`/src/music-app.ts`、`/src/music.css` 转译正常 |
-| `app/dist` 回灌 | `robocopy /MIR` 成功（复制 8 / 清除 3 个过期哈希资产 / 失败 0），回灌后 **175 个文件与 playground 构建逐文件 MD5 一致**；`index.html` 已指向新哈希 `index-Dx5c5WkF.js` |
+| `app/dist` 回灌 | `robocopy /MIR` 成功（复制 8 / 清除 5 个过期哈希资产 / 失败 0），回灌后 **175 个文件与 playground 构建逐文件 MD5 一致**；`index.html` 已指向新哈希 `index-vOTKXiS1.js`（应用主体为 `music-app-Dfxe6QmK.js`） |
+| `check-music-player` | **本轮修好**：`music-player.ts` 的 `"./native-playback"` 无扩展名，Node 类型剥离下解析不到 → 补 `.ts`；随后暴露 `NativePlaybackClient` 构造期直接读 `window`，故 `refresh()`/构造函数/`resolveTrackUrl()` 加宿主判空（无 `window` 时 `transport` 落回已有的 `"none"`）。**4/4 通过** |
+| `check-music-model` | **仍失败，属基线既有缺陷**：`day retains its frosted finish` 断言不符。该脚本只导入 `music-model.ts`（`git diff` 为空，本轮未碰），故与本轮改动无关；未修改，需先确认原意 |
 | 真实曲库规模 | **79 张专辑 / 774 首曲目**，音乐根 `C:\Users\徐梓烽\Music\Music` |
 | **歌词覆盖率（真实全库 774 首逐首请求，0 失败，15.9s ≈ 20ms/首）** | 内嵌同步 SYLT **417（53.9%）**、无歌词 286（37.0%）、同名 `.lrc` **54（7.0%）**、内嵌非同步 USLT **17（2.2%）** → **63.1% 的曲目有歌词，其中 60.9% 可逐字同步** |
 | 真实 `.lrc` 通道实测 | `Natural.flac`（配同名 `.lrc`）→ `{"source":"lrc","text":"\r\n[00:00.00]Natural - Imagine Dragons\r\n..."}`；该 `.lrc` 为 CRLF + 首行空行，解析正确 |
@@ -281,6 +284,48 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | **分发包（`v0.3.0-local.1`）验证** | 515.0 MB（基座 778 MB）。包内 `runtime/node.exe` 起 `app/scripts/music-server.mjs`：静态首页 HTTP 200 且引用新哈希、`/api/library` 返回真实 79 张、两个新接口正确、歌词接口返回 SYLT 逐字同步 → **裁剪后的 15 包闭包（6.74 MB）完整可用**。`RhineMusic.exe` 从 Bash 侧启动后起在 `127.0.0.1:5175/5176` 并生成 14 MB 的 WebView2 配置目录 → **WebView2 外壳确实初始化成功** |
 | 浏览器零拷贝验证 | Edge 154.0.4258.53，`--user-data-dir` 独立配置；缓存中检出 `audioUrl`/`albumId`/`relativePath`（已拉真实曲库）、`detail-switch`（新 CSS 已载入）、`api/lyrics`（新 JS 已载入），确认运行的是 B/C/D 构建 |
 | `--remote-debugging-port` | **本机不可用**（9222 无监听，疑策略限制）→ CDP 自动化不可行；改用窗口内 `F12` |
+
+## 6.2 图集脏矩形上传（第二轮需求 A 的核心修复）
+
+**结论：`CanvasTexture.needsUpdate = true` 会把整张图集重新上传，而这张图集是 4096×1280 RGBA ≈ 21 MB。** 换风格/换列会把一整排新专辑带进池子，每张新专辑各付一次整面上传，实测一次导航最多约 48 次 ≈ **1 GB 纹理流量**。第一轮的"按专辑键控图集"消除了滚动与换列的重绘，但没消除"新专辑进入池子"这一次；这就是"卡顿有所改善但依旧存在"的剩余项。
+
+**做法**（`src/cover-atlas.ts`）：`atlasCanvas` 仍是唯一真相（照样写入），另把刚画好的 256×256 `tileCanvas` 用 `texSubImage2D` 直接补进活纹理的那一块矩形 —— 262 kB 而不是 21 MB，约 **80×**。三处必须对齐 three r183 的行为，都已按源码核对：
+
+| 细节 | 依据 |
+|---|---|
+| 取活纹理句柄 | `renderer.properties.get(texture).__webglTexture`；首帧渲染前为 `undefined`，此时**必须**回退整面上传 |
+| 绑定必须走状态缓存 | `renderer.state.bindTexture(gl.TEXTURE_2D, handle)`（**不要**用裸 `gl.bindTexture`，否则 three 的 `currentBoundTextures` 与实际绑定不一致，下一次绘制会沿用错纹理） |
+| 四个像素存储参数 | three 在 `uploadTexture` 里**每次上传都无条件重设** `UNPACK_FLIP_Y_WEBGL`/`UNPACK_PREMULTIPLY_ALPHA_WEBGL`/`UNPACK_ALIGNMENT`/`UNPACK_COLORSPACE_CONVERSION_WEBGL`，所以照抄它的取值（1 / 0 / 4 / `NONE`，因为 `colorSpace = SRGBColorSpace` 与工作色彩空间同原色）不会留下脏状态 |
+| 上下文类型 | `getContext()` 的静态类型是 WebGL1｜WebGL2 的联合，联合上**只有** `texSubImage2D` 的 `ArrayBufferView` 重载，源码形式必须经 `WebGL2RenderingContext` 取；运行时确实是 WebGL2（three 只请求 `'webgl2'`） |
+| **子矩形纵向落点** | three 上传 canvas 时带 `UNPACK_FLIP_Y_WEBGL`，所以 canvas 顶行落在纹理**最后**一行；子矩形只翻转自己那一块，故 canvas 行 `y` 需落在 `H - h - y`。已提取为纯函数 `atlasSubRectY()` 并有断言：**该函数与 `writeTile` 里给着色器的 UV（`1 - (row+1)/rows`）互相独立推导出同一个位置**，`check-music-scene` 对 4 种行数 × 2 种瓦片尺寸逐行比对两者 |
+
+**风险与开关**：纵向落点算错会让封面显示成别的专辑，且本环境无 GPU 无法自动验证 —— 所以它是**具名函数 + 独立断言**，而不是写在调用处的一个表达式。若目视发现封面错位/镜像，把 `uploadTile()` 的返回值改成恒 `false` 即整体回到整面上传（正确性不变，只损失性能）。
+
+**第二项**：`renderDetail()` 原本每次换专辑都 `innerHTML` 重写整根阅读栏，于是**每次都要重建带 `backdrop-filter: blur(18px)` 的标签栏**（合成器要重新生成模糊层），并顺带重解析档案面板与 8 行参数表；现在改为**骨架建一次、只写变化的区域**（`detailSkeleton()`），标签栏标签文案恒定、只写选中态，且选中态未变时**跳过指示器的 `offsetLeft/offsetWidth` 读取**（少一次强制同步布局）。`h1` 必须保持 `#album-detail-content` 的**直接子元素**（4 条样式规则以 `> h1` 选择），故上半区不能加包裹层；档案面板的稳定父层用 `.archive-mount { display: contents }`，父层不成盒，`.album-archive` 的间距与外边线行为不变。
+
+**未做（已量化后主动放弃）**：`scene.ts` 每帧约 432 个 `visibleCell` 对象 + 432 个模板字符串 + 1 个 `Set`，`music-camera.ts` 每帧约 12–20 个 `Vector3`。按 V8 新生代分配成本折算约 10 µs/帧量级，比一次 21 MB 纹理上传或一次强制布局低两个数量级，因此排在最后且本轮未动 —— 它是真实存在的开销，但不是本次"卡顿"的主因。
+
+## 6.3 线上来源的实测结论（第二轮：整体换成国内可访问集合）
+
+| 来源 | 主机 | 覆盖率（真实 79 张） | 备注 |
+|---|---|---|---|
+| QQ 音乐 | `c.y.qq.com` | **38/79（48.1%）** | 唯一提供**长中文简介**的来源（叶惠美 2568 字、丝路 8000+ 字）；免密钥；先 `smartbox_new.fcg` 取 mid，再 `fcg_v8_album_info_cp.fcg` 取详情 |
+| 百度百科 | `baike.baidu.com` | **33/79（41.8%）** | 只用官方开放 API `BaikeLemmaCardApi`（appid 379020）；**词条页即使带完整浏览器头也返回 403 + 验证码**，页面通道不可用 |
+| MusicBrainz | `musicbrainz.org` | 39/79 | 发行类型/首次发行/艺人一致度，CC0 |
+| Apple Music 商店 | `itunes.apple.com` | 1/39 | **降级为二阶段**：只有当国内三源**全部返回"没找到"**才发起；命中或报错都不再花费请求 |
+| 网易云 / 咪咕 / 酷狗 / 必应 / 百度搜索 | — | 0 | 均已实测后**主动排除**（分别是 `code:-462` 限流、只回 HTML 壳无数据、两主机 404、通用 SERP 非元数据 API、1.1 MB 结果页含反爬标记） |
+| 维基百科 / Wikidata | — | 0 | `zh.wikipedia.org` 每次 9.0s 中止（DNS 污染），79 张贡献 0，已**整体删除**该通道 |
+
+**两条必须记住的错答防护**（两个来源对歧义词条都会自信地返回错东西，都靠"复核"而不是"换查询词"）：
+
+- **QQ 音乐**：建议接口按热度排序，返回的 mid 可能属于别的专辑 → 取详情后**再用详情自己的 `name` 复核一次**专辑名；不符即 `empty` 并说明"详情返回的是《X》"。`X 专辑` / `X（专辑）` / `X + 歌手` 这类消歧后缀在百度百科上**试过且无效**（后缀在查询前被归一化掉）。
+- **百度百科**：一个关键词只解析到一个词条，「叶惠美」回的是那位母亲，「丝路」回的是丝绸之路 → 摘要须同时满足三段式校验：含 `《专辑名》`、含 `发行/收录/推出`、含歌手名之一，否则 `empty` 并回显被拒摘要的前 36 字。
+
+**标题清洗**（`titleVariants()`，实测收益最大的一处）：本地标题带包装（`燕尾蝶<下定爱的决心>`、`我好吗? - Single`、`爱的大游行Live全记录 (Live)`），清洗后**恢复了「燕尾蝶」(4569 字) 与「15 Khalil Fong Live in Hong Kong 2011」**，两者原始标题都落空；上限 2 个变体，避免一次查询发散。
+
+**语句槽位**（`STATEMENT_SLOTS`）：QQ 的 `aDate` 与 MusicBrainz 的 `first-release-date` 说的是同一件事，原先会拼成"…发行于 D…首次发行于 D"把同一个日期说两遍；现在陈述句带 `slot`，装配时**每个槽位取第一条**。字段级明细一条不丢（`facts` 不去重），真正的分歧仍由「年份差异」暴露。实测：叶惠美两个来源同为 2003-07-31 → 正文只说一次；范特西两源不一致（09-14 / 09-20）→ 正文取 QQ 的，两条日期在 facts 里并存。
+
+**第二轮线上实测（4 张代表作，走真实网络与真实代码路径）**：4/4 命中，763–1028 ms/张，`providers` 行分别为 `qq:ok baike:ok musicbrainz:ok`（叶惠美、范特西）、`qq:ok baike:empty musicbrainz:empty`（燕尾蝶）、`qq:ok baike:empty musicbrainz:ok`（丝路）；Apple Music **全程未被请求**，证明二阶段门控生效；出处只列真正贡献内容的来源（燕尾蝶只列 `QQ 音乐`）。复现脚本：`playground/rhine-source-probe/smoke.mjs`。
 
 ## 7. 变更记录
 
@@ -302,3 +347,6 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 2026-10-06 | 打包并验证 `releases/rhine-music-local-mod/v0.3.0-local.1/`（515.0 MB，基座 778 MB，省 263 MB）；包内 `runtime/node.exe` 起服务实测：静态首页 200 且引用新哈希 `index-Dx5c5WkF.js`、`/api/library` 返回真实 79 张、`/api/album-online/:id` 门控与命中均正确、歌词接口返回 SYLT 逐字同步；`RhineMusic.exe` 从 Bash 侧启动后监听 127.0.0.1:5175/5176 并生成 14 MB WebView2 配置目录（验证完即删） | 分发副本是唯一能证明"用户双击就能开"的证据；顺带证明裁剪到 15 包的依赖闭包完整可用 |
 | 2026-10-06 | 自检：`tsc --noEmit` 退出码 0；`vite build` 104 模块 / 2.75s 落入干净 playground；`robocopy /MIR` 回灌 `app/dist`（复制 8 / 清除 3 个过期哈希资产），**175 个文件逐文件 MD5 全部一致**；`check:music` 12 脚本中 10 通过、2 失败（均为已登记的基线既有缺陷，与本次改动无关）；产物令牌核查 `detail-switch-halo`(9)/`switch-breathe`(2)/`switch-glint`(2)/`archive-actions`(2)/`archive-online-status`(2)/`animation-play-state`(2)/JS `online-album`(3)/`online-library`(2)/`consent`(1)/`dragVelocity`(6)/`releaseTarget`(2) 全部落地，旧 CSS 令牌计数为 0 | 交付前必须自证"改的代码真的进了产物"，而不是只看源码 |
 | 2026-10-06 | 登记线上层的实测结论与三条新环境约束（§6「线上补录的四条实测事实」与「`robocopy` 不能复制单个文件」「原生 Node 读不了 Git Bash 的 `/tmp`」，另见 §6.1）：`robocopy` **不能**复制单个文件（源按目录处理，报错 123）；原生 Windows Node **读不了** Git Bash 的 `/tmp`（解析成 `C:\tmp\`）；`rm` 日志文件会触发安全删除钩子（`SAFE_DELETE_BULK_CONFIRM_REQUIRED`） | 三条都是"命令成功但结果不对"或"无谓卡住"的陷阱 |
+| 2026-10-06 | **第二轮（需求 A 剩余卡顿 + 需求 D 细化 + 需求 B 来源替换）**：①`cover-atlas.ts` 新增 `atlasSubRectY()` + `attachRenderer()` + `uploadTile()`，图集上传由整面 21 MB 变脏矩形 262 kB（约 80×），`scene.ts` 接线；②`music-app.ts` 新增 `detailSkeleton()` 与 `syncTabState()`，`renderDetail()` 由整栏 `innerHTML` 重建改为就地写 5 个区域 + 跳过未变的指示器读取，`music-archive.css` 增 `.archive-mount{display:contents}`；③歌词细线（`.lyric-line[data-d="0"]::after`）整体删除，逐字层由 `clip-path` 硬切改为柔边 `mask-image`（`--ly-fade` = AMLL 的 `wordFadeWidth`），新增未唱部分降亮、字号纵深、`lyric-float` 关键帧与辉光；④新增 `lyrics-settings.ts/.css` 与设置面板「歌词」（11 项参数 + 实时预览 + 颜色跟随主题 + 恢复默认，存 `rhine-lyric-preferences`）；⑤`album-online.mjs` 删除维基通道，新增 `qq()`/`baike()` 及两条错答防护、`titleVariants()`、`STATEMENT_SLOTS` 语句槽位去重、Apple Music 降为二阶段、检索链接改百度；⑥`check-music-online`/`check-music-lyrics`/`check-music-scene` 补断言 | 用户要求"先找到问题、做计划、再解决"：图集整面重传与详情栏重建是剩余卡顿的实测主因；细线与动效、参数可调、国内来源分别对应其余三项明确要求 |
+| 2026-10-06 | 修好基线既有缺陷之一：`music-player.ts` 的 `"./native-playback"` 补扩展名，并使 `NativePlaybackClient` 在无 `window` 时不抛错；`check-music-player` 由 0/4 变为 **4/4 通过**。`check-music-model` 仍失败并再次登记为基线既有（本轮未碰其唯一依赖 `music-model.ts`） | `check:music` 是项目自带的验收命令，其中一步长期无法加载模块意味着它从未真正运行过；无 `window` 判空属模块自身健壮性（`transport` 本就有 `"none"` 态） |
+| 2026-10-06 | 第二轮自检：`tsc --noEmit` 退出码 0；`vite build` **106 模块 / 2.71s** 落入干净 playground；`robocopy /MIR` 回灌 `app/dist`（复制 8 / 清除 5 / 失败 0），**175 文件逐文件 MD5 一致**；线上层真实联网实测（`playground/rhine-source-probe/smoke.mjs`）4/4 命中、Apple Music 全程零请求；产物令牌核查 `archive-mount`(2)/`lyric-preview`(2)/`lyric-settings`(2)/`rhine-lyric-preferences`(1)/`lyric-color-reset`(1)/`lyric-float`(1)/`__webglTexture`(1)/`texSubImage2D`(1)/`在百度搜索更多`(1)/新令牌 `--ly-size`(6)/`--ly-pitch`(2)/`--ly-fade`(8)/`--ly-unsung`(3)/`--ly-glow-size`(3)/`--ly-float`(6)/`--line-h`(7) 全部落地，**旧实现残留 `--line-p`(0)/`维基百科`(0)/`lineEndTime`(0)** | 交付前必须自证"改的代码真的进了产物"、且旧实现没有残留，而不是只看源码 |

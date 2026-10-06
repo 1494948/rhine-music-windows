@@ -39,6 +39,14 @@
 
 ## 在线资料
 
-Wikipedia 摘要、Wikidata 与 MusicBrainz 数据按其来源许可处理。客户端保存介绍时同时保存来源链接、取得时间和许可说明；此类用户自行查询的缓存不纳入项目 MIT 授权，也不进入发布包。MusicBrainz 将核心数据和补充数据分别授权，详见[官方数据许可](https://musicbrainz.org/doc/About/Data_License)；不能仅因为程序开源就统一将数据改授 MIT。
+「专辑详情与背景」的线上层只读取**国内可正常访问**的公开来源，并按各自许可处理：**MusicBrainz**（核心数据 CC0，补充数据另有授权）、**QQ 音乐**（内容版权归腾讯音乐娱乐集团及原作者所有）、**百度百科**（内容版权归百度百科及词条贡献者所有）、**Apple Music 商店**（商店展示信息，以来源页为准）。取得介绍时同时保存来源名称、链接、取得时间与许可说明；界面逐条标注出处。
+
+**本地改造版本已移除 Wikipedia / Wikidata 通道**：其上在本机网络下不可达（每次请求 9.0s 中止），在真实曲库 79 张上贡献 0 条。`app/scripts/album-introductions.mjs` 仍保留该路径作为"网络可达时尽力而为"的旧实现，但在本机不会成功。
+
+此类用户自行查询的内容属第三方权利内容，不纳入项目 MIT 授权、不进发布包，也不因程序开源而被改授 MIT。QQ 音乐与百度百科的简介/摘要仅作本机阅读展示，不转载、不再分发。
+
+### 界面动效的参考
+
+歌词动效的设计**参考**了 [Steve-xmh/applemusic-like-lyrics](https://github.com/Steve-xmh/applemusic-like-lyrics)（AMLL，MIT）的公开思路——逐字柔边遮罩（其 `wordFadeWidth`）、非高亮行缩放（其 `bg-line-scale`）、弹性与模糊等选项的可调性。**未复制其代码或样式表**，本项目按同一思路用自有 CSS/TS 重新实现；引用仅供说明设计来源。
 
 如发现署名遗漏或具体权利问题，请通过本仓库 [Issues](https://github.com/RonaldDeng/Rhine-Music-Demo/issues) 提供涉及文件、来源及说明，维护者可据此核对。

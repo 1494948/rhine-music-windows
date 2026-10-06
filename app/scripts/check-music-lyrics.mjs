@@ -419,7 +419,6 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
     'var(--i,',
     'var(--blur',
     'var(--p,',
-    'var(--line-p',
     '[data-d="0"]',
     '[data-d="near"]',
     '[data-d="mid"]',
@@ -429,6 +428,39 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   ];
   for (const token of paneTokens)
     assert.ok(switchCss.includes(token), `music-lyrics-switch.css is missing ${token}`);
+  // The thin rule under the singing line was removed on request. Both halves of
+  // the mechanism have to stay gone: the pseudo-element itself and the progress
+  // property that scaled it.
+  assert.ok(
+    !switchCss.includes('--line-p'),
+    'the removed line-progress sweep must not come back',
+  );
+  assert.ok(
+    !/\.lyric-line[^{]*::after/.test(switchCss),
+    'the lyric line must not carry a decorative ::after rule',
+  );
+  // Every token the settings module writes has to be read by the stylesheet, or
+  // the control silently does nothing. This is the failure mode a reviewer
+  // cannot see: a typo'd property name is invisible at build time.
+  const settingsSource = await read('lyrics-settings.ts');
+  const written = [...settingsSource.matchAll(/"(--ly-[a-z-]+)":/g)].map((match) => match[1]);
+  assert.ok(written.length >= 10, `expected the token list to be read, found ${written.length}`);
+  for (const token of new Set([...written, '--ly-color', '--ly-accent', '--line-h']))
+    assert.ok(
+      switchCss.includes(`var(${token}`) || switchCss.includes(`${token}:`),
+      `lyrics-settings writes ${token} but music-lyrics-switch.css never reads it`,
+    );
+  // The in-panel preview must render the real thing: same classes, same tiers.
+  for (const token of ['lyric-line', 'lyric-main', 'lyric-fill', 'data-d='])
+    assert.ok(settingsSource.includes(token), `the preview is missing ${token}`);
+  assert.ok(
+    appSource.includes('lyricsMarkup(lyricSettings)'),
+    'the settings panel must be mounted in the app shell',
+  );
+  assert.ok(
+    appSource.includes('applyLyricControl('),
+    'the settings controls must be wired to the shared input handler',
+  );
   const switchTokens = [
     '.detail-switch',
     '.detail-switch-halo',
@@ -473,9 +505,9 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
     sources: [{ name: '某百科', url: 'https://example.com/c', license: 'CC BY-SA 4.0' }, { name: '' }],
     providers: [
       { id: 'musicbrainz', label: 'MusicBrainz', status: 'ok' },
-      { id: 'wikipedia', label: '维基百科', status: 'failed', detail: '无法连接' },
+      { id: 'baike', label: '百度百科', status: 'failed', detail: '无法连接' },
     ],
-    searchUrl: 'https://zh.wikipedia.org/w/index.php?search=x',
+    searchUrl: 'https://www.baidu.com/s?wd=%E6%B5%8B%E8%AF%95%E4%B8%93%E8%BE%91',
   };
   const adopted = resolveAlbumArchive(album(), { ...context, online }, { albums: {} });
   assert.equal(adopted.status, 'online');
@@ -488,7 +520,7 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   // A source that failed is reported separately from the ones that contributed.
   assert.deepEqual(
     adopted.providers.map((provider) => provider.id),
-    ['wikipedia'],
+    ['baike'],
     'only the unanswered sources are carried into the panel',
   );
   // Prose was obtained, so the search escape hatch is not offered.
@@ -503,7 +535,7 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   // Nothing adopted: the panel keeps the derived structure and says why.
   const empty = resolveAlbumArchive(
     album(),
-    { ...context, online: { status: 'empty', error: '公开来源未找到可靠对应的条目。', searchUrl: 'https://zh.wikipedia.org/w/index.php?search=x' } },
+    { ...context, online: { status: 'empty', error: '公开来源未找到可靠对应的条目。', searchUrl: 'https://www.baidu.com/s?wd=%E6%B5%8B%E8%AF%95%E4%B8%93%E8%BE%91' } },
     { albums: {} },
   );
   assert.equal(empty.status, 'derived');
@@ -512,7 +544,7 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   // a failed lookup must add nothing, and must remove nothing.
   assert.equal(empty.facts.length, resolveAlbumArchive(album(), context, { albums: {} }).facts.length);
   assert.match(empty.hint, /未采用任何内容/);
-  assert.equal(empty.searchUrl, 'https://zh.wikipedia.org/w/index.php?search=x');
+  assert.equal(empty.searchUrl, 'https://www.baidu.com/s?wd=%E6%B5%8B%E8%AF%95%E4%B8%93%E8%BE%91');
 
   // A stored introduction is kept even when the live lookup adopted nothing.
   const withLibrary = resolveAlbumArchive(

@@ -3,11 +3,11 @@ import {
   charTimeline,
   findActiveLine,
   karaokeClip,
-  lineEndTime,
   splitChars,
   type LyricsChar,
   type LyricsDocument,
 } from "./music-lyrics.ts";
+import { applyLyricTokens, type LyricsSettings } from "./lyrics-settings.ts";
 
 /**
  * The lyrics surface. It is deliberately built only when someone asks to see
@@ -25,6 +25,14 @@ export interface LyricsPaneTrack {
   artist: string;
 }
 
+/**
+ * Everything the 「歌词」 settings module can change at runtime lives in
+ * `lyrics-settings.ts`, which owns the single token list shared with the in-panel
+ * preview. The renderer only needs three of those values back in JavaScript: the
+ * row pitch positions every line and drives the scroll target, the blur
+ * multiplier is applied where the per-line `--blur` values are written, and the
+ * delay is folded into the clock.
+ */
 export interface LyricsPaneOptions {
   /** Reads one track's lyrics. Called at most once per track id. */
   load: (trackId: string) => Promise<LyricsDocument>;
@@ -72,6 +80,12 @@ export class LyricsPane {
   private reveal = 0;
   private ready = false;
   private observer?: ResizeObserver;
+  /** Row pitch, kept in step with `--line-h` by setStyle. */
+  private pitch = LINE_HEIGHT;
+  /** Blur tier multiplier; 1 is the shipped look. */
+  private blurScale = 1;
+  /** Lyric offset against the audio clock, in seconds. */
+  private delay = 0;
 
   constructor(host: HTMLElement, options: LyricsPaneOptions) {
     this.options = options;
@@ -173,7 +187,7 @@ export class LyricsPane {
     this.velocity = 0;
     this.windowStart = -1;
     this.windowCount = 0;
-    this.track.style.setProperty("--line-h", `${LINE_HEIGHT}px`);
+    this.track.style.setProperty("--line-h", `${this.pitch}px`);
     this.track.style.setProperty("--shift", "0px");
     if (!lines.length) {
       this.ready = false;
@@ -240,7 +254,10 @@ export class LyricsPane {
 
   /** Feed the playback clock. Called from the existing player subscription. */
   setClock(seconds: number) {
-    this.clock = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+    // The settings offset is folded in here rather than at every read, so a
+    // change takes effect on the next tick without touching the call site.
+    const shifted = (Number.isFinite(seconds) ? Math.max(0, seconds) : 0) + this.delay;
+    this.clock = Math.max(0, shifted);
     // While the bar is held still, the reveal animation owns the loop, and a
     // seek from elsewhere still has to repaint.
     if (!this.running && this.reveal > 0.001) this.step(0);
@@ -286,6 +303,24 @@ export class LyricsPane {
     this.element.classList.toggle("reduce-motion", reduced);
   }
 
+  /**
+   * Apply the 「歌词」 settings. Every visual knob is a custom property written by
+   * the shared token list, so a change costs one style write and never a
+   * re-mount: the mounted lines re-read them on the next paint. The three values
+   * the renderer also needs are handled here — the row pitch has to reach the
+   * scroll target, the blur tiers are inline `--blur` values derived in
+   * markActive, and the delay is folded into the clock.
+   */
+  setStyle(settings: LyricsSettings) {
+    applyLyricTokens(this.element, settings);
+    this.pitch = Math.max(24, settings.pitch);
+    this.track.style.setProperty("--line-h", `${this.pitch}px`);
+    this.delay = settings.delayMs / 1000;
+    this.blurScale = settings.blur;
+    this.measure();
+    if (this.ready) this.markActive(this.activeIndex);
+  }
+
   clear() {
     this.stop();
     this.lyrics = EMPTY_LYRICS;
@@ -329,7 +364,7 @@ export class LyricsPane {
       this.markActive(index);
     }
     const line = index < 0 ? 0 : index;
-    const target = this.viewportHeight * 0.5 - (line * LINE_HEIGHT + LINE_HEIGHT / 2);
+    const target = this.viewportHeight * 0.5 - (line * this.pitch + this.pitch / 2);
     if (this.reduced) {
       this.shift = target;
       this.velocity = 0;
@@ -368,11 +403,18 @@ export class LyricsPane {
       node.dataset.d =
         distance === 0 ? "0" : distance <= 2 ? "near" : distance <= 6 ? "mid" : "far";
       // Lines beyond the readable band skip the filter entirely rather than
-      // paying for `blur(0px)`, which still allocates a filter layer.
-      node.style.setProperty(
-        "--blur",
-        distance === 0 ? "none" : distance <= 3 ? "blur(1.4px)" : distance <= 9 ? "blur(2.6px)" : "none",
-      );
+      // paying for `blur(0px)`, which still allocates a filter layer. The two
+      // in-band tiers are scaled by the settings' blur multiplier, and a
+      // multiplier of zero drops the filter altogether.
+      const blur =
+        distance === 0 || this.blurScale <= 0
+          ? "none"
+          : distance <= 3
+            ? `blur(${(1.4 * this.blurScale).toFixed(2)}px)`
+            : distance <= 9
+              ? `blur(${(2.6 * this.blurScale).toFixed(2)}px)`
+              : "none";
+      node.style.setProperty("--blur", blur);
       node.style.setProperty("--p", "0");
       if (own === index) this.activeNode = node;
     }
@@ -388,12 +430,8 @@ export class LyricsPane {
       node.style.setProperty("--p", "1");
       return;
     }
-    const line = this.lyrics.lines[index];
-    const end = lineEndTime(this.lyrics, index);
+    // The line's own duration no longer feeds a second readout: the sweep's soft
+    // edge is the whole indicator, so only the clip fraction is written.
     node.style.setProperty("--p", karaokeClip(this.glyphs, this.timeline, this.clock).toFixed(4));
-    node.style.setProperty(
-      "--line-p",
-      Math.max(0, Math.min(1, (this.clock - line.time) / Math.max(0.2, end - line.time))).toFixed(4),
-    );
   }
 }

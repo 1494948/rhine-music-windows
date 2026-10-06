@@ -44,6 +44,18 @@ declare global {
   }
 }
 
+/**
+ * The browser global, or null when there is no browser.
+ *
+ * Every access in this module is to a global the WebView2 shell guarantees, so
+ * the guard is not about the shipped application. It is about everything else:
+ * a module that reads `window` at construction time throws under plain Node, and
+ * a module that throws on construction cannot be loaded by the player's own
+ * check. `transport` already has a `"none"` state for exactly this case.
+ */
+const hostWindow = (): (Window & typeof globalThis) | null =>
+  typeof window === "undefined" ? null : window;
+
 export class NativePlaybackClient {
   private listeners = new Set<Listener>();
   private host: WebView2Host | null = null;
@@ -53,15 +65,17 @@ export class NativePlaybackClient {
 
   constructor() {
     this.refresh();
-    window.addEventListener("focus", () => this.refresh());
-    document.addEventListener("DOMContentLoaded", () => this.refresh(), {
+    const view = hostWindow();
+    if (!view) return;
+    view.addEventListener("focus", () => this.refresh());
+    view.document.addEventListener("DOMContentLoaded", () => this.refresh(), {
       once: true,
     });
-    const timer = window.setInterval(() => {
+    const timer = view.setInterval(() => {
       this.refresh();
-      if (this.controlBase || this.host) window.clearInterval(timer);
+      if (this.controlBase || this.host) view.clearInterval(timer);
     }, 150);
-    window.setTimeout(() => window.clearInterval(timer), 8000);
+    view.setTimeout(() => view.clearInterval(timer), 8000);
   }
 
   get available(): boolean {
@@ -76,10 +90,12 @@ export class NativePlaybackClient {
   }
 
   private refresh(): boolean {
-    const control = window.__rhinePlayerControl;
+    const view = hostWindow();
+    if (!view) return false;
+    const control = view.__rhinePlayerControl;
     if (control?.base) this.controlBase = control.base;
 
-    const host = window.chrome?.webview ?? null;
+    const host = view.chrome?.webview ?? null;
     if (host && (!this.bound || this.host !== host)) {
       this.host = host;
       this.bound = true;
@@ -244,7 +260,10 @@ export class NativePlaybackClient {
 
 export function resolveTrackUrl(audioUrl: string): string {
   if (/^https?:\/\//i.test(audioUrl)) return audioUrl;
-  return new URL(audioUrl, window.location.origin).toString();
+  const origin = hostWindow()?.location?.origin;
+  // Without an origin a relative path has nothing to resolve against, so it is
+  // passed through unchanged rather than guessed at.
+  return origin ? new URL(audioUrl, origin).toString() : audioUrl;
 }
 
 let client: NativePlaybackClient | null = null;

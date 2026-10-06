@@ -69,6 +69,16 @@ import {
   type LyricsPayload,
 } from "./music-lyrics";
 import { LyricsPane, type LyricsPaneTrack } from "./music-lyrics-pane";
+import "./lyrics-settings.css";
+import {
+  applyLyricControl,
+  applyLyricTokens,
+  defaultLyricsSettings,
+  loadLyricsSettings,
+  lyricsMarkup,
+  saveLyricsSettings,
+  syncLyricsUI,
+} from "./lyrics-settings.ts";
 import { DetailSwitch } from "./music-detail-switch";
 
 type Theme = "day" | "night";
@@ -427,6 +437,7 @@ const browseTransition = new SurfaceTransition(
  * parses and mounts a document, so browsing stays exactly as cheap as it was
  * before this feature existed.
  */
+const lyricSettings = loadLyricsSettings();
 const lyricsPane = new LyricsPane($("#music-detail"), {
   load: loadLyrics,
   current: () => lyricTarget(currentAlbum()),
@@ -441,6 +452,9 @@ const detailSwitch = new DetailSwitch({
 });
 detailSwitch.setReduced(preferences.reduced);
 lyricsPane.setReduced(preferences.reduced);
+// Applied before the pane ever mounts a document, so the first lyric frame the
+// user sees already carries their settings rather than the shipped defaults.
+lyricsPane.setStyle(lyricSettings);
 
 /** The track whose lyrics the pane shows: whatever plays, else the first. */
 function lyricTarget(album: MusicAlbum | undefined): LyricsPaneTrack | undefined {
@@ -940,16 +954,72 @@ function syncTabIndicator(animate = true) {
   indicator.style.transition = animate && !preferences.reduced ? "" : "none";
   indicator.style.transform = `translateX(${button.offsetLeft}px) scaleX(${button.offsetWidth})`;
 }
+/**
+ * The detail column's persistent element handles.
+ *
+ * Rewriting the whole article with `innerHTML` destroyed and rebuilt the tab
+ * rail on every album step. That rail carries `backdrop-filter: blur(18px)`, so
+ * replacing it discards the blurred layer and makes the compositor build a new
+ * one, and the same write re-parsed the archive panel and all eight fact rows
+ * for content that had not changed. Stepping through albums is the most
+ * repeated gesture in the library, so the skeleton is built once and only the
+ * regions that actually differ are rewritten.
+ *
+ * `h1` stays a direct child of the article: four stylesheet rules select it as
+ * `#album-detail-content > h1`, so the upper region cannot be wrapped.
+ */
+interface DetailParts {
+  index: HTMLElement;
+  title: HTMLElement;
+  artist: HTMLElement;
+  facts: HTMLElement;
+  archive: HTMLElement;
+  tabs: HTMLElement;
+  tabContent: HTMLElement;
+}
+
+let detailParts: DetailParts | undefined;
+
+function detailSkeleton(article: HTMLElement): DetailParts {
+  const live = detailParts;
+  // A detached rail means something replaced the article wholesale (a layout
+  // rebuild, a fresh boot), so the handles cannot be trusted any more.
+  if (live && live.tabs.isConnected) return live;
+  article.innerHTML = `<div class="detail-overline"><span data-part="index"></span><div class="detail-album-navigation" role="group" aria-label="切换专辑"><button data-action="prev" aria-label="上一张专辑">↑ 上一张</button><button data-action="next" aria-label="下一张专辑">下一张 ↓</button></div></div><h1></h1><p class="detail-artist"></p><div class="album-facts"></div><div class="archive-mount"></div><div class="music-tabs" role="tablist" aria-label="专辑信息"><button role="tab" id="tab-tracks" data-tab="tracks" aria-controls="album-tab-content"><span>01</span> 歌单</button><button role="tab" id="tab-about" data-tab="about" aria-controls="album-tab-content"><span>02</span> 专辑介绍</button><i class="music-tab-indicator" aria-hidden="true"></i></div><div id="album-tab-content" role="tabpanel"></div>`;
+  detailParts = {
+    index: article.querySelector<HTMLElement>('[data-part="index"]')!,
+    title: article.querySelector<HTMLElement>("h1")!,
+    artist: article.querySelector<HTMLElement>(".detail-artist")!,
+    facts: article.querySelector<HTMLElement>(".album-facts")!,
+    archive: article.querySelector<HTMLElement>(".archive-mount")!,
+    tabs: article.querySelector<HTMLElement>(".music-tabs")!,
+    tabContent: article.querySelector<HTMLElement>("#album-tab-content")!,
+  };
+  return detailParts;
+}
+
+/**
+ * Writes the rail's selected state.
+ *
+ * Only the state, never the markup: both tab labels are constant, so the rail
+ * never needs re-parsing. `data-tab` records what has been written, which lets
+ * `renderDetail` skip the indicator read that would force a second layout.
+ */
+function syncTabState(tabs: HTMLElement, animate = false) {
+  tabs.dataset.tab = activeTab;
+  tabs.querySelectorAll<HTMLElement>("[data-tab]").forEach((button) => {
+    const active = button.dataset.tab === activeTab;
+    button.setAttribute("aria-selected", String(active));
+    button.tabIndex = active ? 0 : -1;
+  });
+  syncTabIndicator(animate);
+}
 function setTab(tab: "tracks" | "about") {
   if (activeTab === tab) return;
   cancelTrackReveal();
   activeTab = tab;
-  document.querySelectorAll<HTMLElement>("[data-tab]").forEach((button) => {
-    const active = button.dataset.tab === tab;
-    button.setAttribute("aria-selected", String(active));
-    button.tabIndex = active ? 0 : -1;
-  });
-  syncTabIndicator();
+  const rail = document.querySelector<HTMLElement>(".music-tabs");
+  if (rail) syncTabState(rail, true);
   const a = currentAlbum();
   if (!a) return;
   const content = $("#album-tab-content");
@@ -996,14 +1066,26 @@ function renderDetail() {
     sameAlbum = detailIdentity === a.id,
     scroll = sameAlbum ? article.scrollTop : 0;
   detailIdentity = a.id;
-  article.innerHTML = `<div class="detail-overline"><span>ALBUM ${String(selected + 1).padStart(3, "0")}</span><div class="detail-album-navigation" role="group" aria-label="切换专辑"><button data-action="prev" aria-label="上一张专辑">↑ 上一张</button><button data-action="next" aria-label="下一张专辑">下一张 ↓</button></div></div>
-    <h1 title="${esc(a.title)}">${albumTitleMarkup(a.title)}</h1><p class="detail-artist">${esc(a.artist)}${a.offline ? '<span class="offline-badge">目录离线</span>' : ""}</p>
-    <div class="album-facts">${fields.map(([name, value]) => `<div><small>${name}</small><span>${esc(String(value))}</span></div>`).join("")}</div>
-    ${albumArchiveMarkup(resolveAlbumArchive(a, archiveContextFor(a)), esc, archiveActionsFor(a))}
-    <div class="music-tabs" role="tablist" aria-label="专辑信息"><button role="tab" id="tab-tracks" data-tab="tracks" tabindex="${activeTab === "tracks" ? 0 : -1}" aria-selected="${activeTab === "tracks"}" aria-controls="album-tab-content"><span>01</span> 歌单</button><button role="tab" id="tab-about" data-tab="about" tabindex="${activeTab === "about" ? 0 : -1}" aria-selected="${activeTab === "about"}" aria-controls="album-tab-content"><span>02</span> 专辑介绍</button><i class="music-tab-indicator" aria-hidden="true"></i></div>
-    <div id="album-tab-content" role="tabpanel" aria-labelledby="tab-${activeTab}">${activeTab === "tracks" ? trackList(a, discs) : albumAbout(a)}</div>`;
+  const parts = detailSkeleton(article);
+  parts.index.textContent = `ALBUM ${String(selected + 1).padStart(3, "0")}`;
+  parts.title.title = a.title;
+  parts.title.innerHTML = albumTitleMarkup(a.title);
+  parts.artist.innerHTML = `${esc(a.artist)}${a.offline ? '<span class="offline-badge">目录离线</span>' : ""}`;
+  parts.facts.innerHTML = fields
+    .map(([name, value]) => `<div><small>${name}</small><span>${esc(String(value))}</span></div>`)
+    .join("");
+  parts.archive.innerHTML = albumArchiveMarkup(
+    resolveAlbumArchive(a, archiveContextFor(a)),
+    esc,
+    archiveActionsFor(a),
+  );
+  // The rail's geometry moves only when the selected tab does, so the indicator
+  // read (`offsetLeft`/`offsetWidth`, a forced layout) is skipped otherwise.
+  if (parts.tabs.dataset.tab !== activeTab) syncTabState(parts.tabs);
+  parts.tabContent.innerHTML =
+    activeTab === "tracks" ? trackList(a, discs) : albumAbout(a);
+  parts.tabContent.setAttribute("aria-labelledby", `tab-${activeTab}`);
   article.scrollTop = scroll;
-  syncTabIndicator(false);
   documentDecryption.reset(
     article,
     preferences.reduced || scene?.decryptionFrame.phase === "clear",
@@ -1444,7 +1526,7 @@ function openPanel(next: Panel) {
 }
 function renderLibraryPanel() {
   $("#panel-body").innerHTML =
-    `<p class="panel-intro">根目录中的每首单曲各是一张卡片，优先使用自身内嵌封面。子文件夹按专辑展示，优先使用文件夹封面。</p><label class="field-label" for="music-roots">音乐文件夹<span>多个目录各占一行</span></label><textarea id="music-roots" rows="3" placeholder="/Users/你的用户名/Music">${esc(library.roots.map((r) => r.path).join("\n"))}</textarea><div class="panel-actions"><button class="primary-button" data-action="scan">保存目录并扫描 ↗</button><button data-action="rescan">重新扫描</button></div><div id="scan-status" class="scan-status"></div><div class="library-metrics"><div><b>${library.albums.length}</b><span>专辑</span></div><div><b>${library.albums.reduce((n, a) => n + a.tracks.length, 0)}</b><span>曲目</span></div><div><b>${library.genres.filter((g) => library.albums.some((a) => a.genreId === g.id)).length}</b><span>流派</span></div></div><section class="panel-section"><h3>专辑详情与背景</h3><p>逐张读取公开元数据源（MusicBrainz / Apple Music 商店 / 维基百科），补充发行背景、发行日期与线上专辑类型，每条内容都附出处并缓存 30 天。音乐文件不会上传。</p><button data-action="online-library" class="text-button">逐张补充专辑详情与背景 ↗</button><p id="online-status" class="scan-status" role="status" aria-live="polite"></p></section><section class="panel-section"><h3>在线资料与本地分类</h3><p>向 MusicBrainz 查询专辑名称与艺术家，补充流派和制作人员；音乐文件留在本机。已有资料使用缓存，人工分类优先保留。</p><button data-action="enrich-library" class="text-button">补充缺失的在线资料 ↗</button><button data-action="edit-genres" class="text-button">编辑流派归并规则 ↗</button></section><section class="panel-section"><h3>封面显示</h3><p>方形、竖版、横版封面均保持原始比例，完整放入卡片正面。没有封面时显示专辑名称占位，不使用其他专辑的图片。</p>${!library.albums.length ? '<button data-action="demo" class="text-button">查看演示封面 ↗</button>' : ""}</section>`;
+    `<p class="panel-intro">根目录中的每首单曲各是一张卡片，优先使用自身内嵌封面。子文件夹按专辑展示，优先使用文件夹封面。</p><label class="field-label" for="music-roots">音乐文件夹<span>多个目录各占一行</span></label><textarea id="music-roots" rows="3" placeholder="/Users/你的用户名/Music">${esc(library.roots.map((r) => r.path).join("\n"))}</textarea><div class="panel-actions"><button class="primary-button" data-action="scan">保存目录并扫描 ↗</button><button data-action="rescan">重新扫描</button></div><div id="scan-status" class="scan-status"></div><div class="library-metrics"><div><b>${library.albums.length}</b><span>专辑</span></div><div><b>${library.albums.reduce((n, a) => n + a.tracks.length, 0)}</b><span>曲目</span></div><div><b>${library.genres.filter((g) => library.albums.some((a) => a.genreId === g.id)).length}</b><span>流派</span></div></div><section class="panel-section"><h3>专辑详情与背景</h3><p>逐张读取国内可正常访问的公开元数据源（QQ 音乐 / 百度百科 / MusicBrainz），补充专辑简介、发行背景、发行日期与线上专辑类型，每条内容都附出处并缓存 30 天。音乐文件不会上传。</p><button data-action="online-library" class="text-button">逐张补充专辑详情与背景 ↗</button><p id="online-status" class="scan-status" role="status" aria-live="polite"></p></section><section class="panel-section"><h3>在线资料与本地分类</h3><p>向 MusicBrainz 查询专辑名称与艺术家，补充流派和制作人员；音乐文件留在本机。已有资料使用缓存，人工分类优先保留。</p><button data-action="enrich-library" class="text-button">补充缺失的在线资料 ↗</button><button data-action="edit-genres" class="text-button">编辑流派归并规则 ↗</button></section><section class="panel-section"><h3>封面显示</h3><p>方形、竖版、横版封面均保持原始比例，完整放入卡片正面。没有封面时显示专辑名称占位，不使用其他专辑的图片。</p>${!library.albums.length ? '<button data-action="demo" class="text-button">查看演示封面 ↗</button>' : ""}</section>`;
   updateScanStatus();
   const configSection = document.createElement("section");
   configSection.className = "panel-section";
@@ -1567,10 +1649,12 @@ function renderSettingsPanel() {
     ${qualityMarkup(renderQuality)}
     <section class="panel-section"><h3>动效与显示</h3><label class="settings-row"><span>减少动态效果<small>简化镜头、文字加载和页签过渡</small></span><input type="checkbox" id="reduced-motion" ${preferences.reduced ? "checked" : ""}></label><label class="settings-row"><span>空闲时停止绘制<small>2 分钟无操作后暂停三维渲染，移动鼠标或按键立即恢复；省电与降低风扇转速</small></span><input type="checkbox" id="idle-stop" ${preferences.idleStop ? "checked" : ""}></label><label class="settings-row"><span>玻璃雾度<small>100% 为原始质感；调高更朦胧，调低更通透。只影响玻璃外壳</small></span><span class="settings-slider"><input type="range" id="glass-frost" aria-label="玻璃雾度" min="0" max="200" step="5" value="${preferences.glassFrost}"><output id="glass-frost-output">${preferences.glassFrost}%</output></span></label><label class="settings-row"><span>锐化强度<small>0% 关闭。三维画面按较低分辨率渲染再放大，锐化找回局部对比；只作用于三维场景</small></span><span class="settings-slider"><input type="range" id="sharpen" aria-label="锐化强度" min="0" max="100" step="5" value="${preferences.sharpen}"><output id="sharpen-output">${preferences.sharpen}%</output></span></label><button class="text-button" data-action="fullscreen">切换全屏 ↗</button></section>
     <section class="panel-section"><h3>声音</h3><label class="settings-row"><span>歌曲音量</span><input type="range" id="volume" aria-label="歌曲音量" min="0" max="100" value="${Math.round(preferences.volume * 100)}"></label><label class="settings-row"><span>切歌淡入淡出<small>当前歌曲先淡出，再淡入下一首</small></span><input type="checkbox" id="song-fade-setting" ${preferences.songFade ? "checked" : ""}></label><label class="settings-row"><span>界面音效<small>玻璃卡片与终端操作</small></span><input type="checkbox" id="sound-setting" ${preferences.sound ? "checked" : ""}></label><label class="settings-row"><span>音效音量</span><input type="range" id="sound-volume" aria-label="音效音量" min="0" max="100" value="${Math.round(preferences.soundVolume * 100)}"></label><label class="settings-row"><span>氛围 BGM<small>专辑开始前淡出，停止后淡入</small></span><input type="checkbox" id="bgm-setting" ${preferences.bgm ? "checked" : ""}></label><label class="settings-row"><span>BGM 音量</span><input type="range" id="bgm-volume" aria-label="BGM 音量" min="0" max="100" value="${Math.round(preferences.bgmVolume * 100)}"></label><button class="text-button" data-action="sound-preview">试听界面音效 ↗</button></section>
+    ${lyricsMarkup(lyricSettings)}
     ${nativeKernelMarkup()}
     <section class="panel-section"><h3>开发与资源</h3><p>音乐适配与维护：<a href="https://github.com/RonaldDeng/Rhine-Music-Demo" target="_blank" rel="noopener">RonaldDeng ↗</a><br>原版界面：<a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener">LBEILC / RhineLabUI ↗</a></p><p><a href="/licenses/project-mit.txt" target="_blank" rel="noopener">代码 MIT 许可 ↗</a> · <a href="https://github.com/RonaldDeng/Rhine-Music-Demo/blob/v0.2.0/NOTICE.md" target="_blank" rel="noopener">版权与资源说明 ↗</a></p><a href="/?original=1&scene=archive" target="_blank" rel="noopener">打开原版档案界面 ↗</a><p><a href="/fonts/MiSans-license.pdf" target="_blank" rel="noopener">MiSans 字体许可 ↗</a></p></section>`;
   updateQuality();
   updateIntroductionStatus();
+  syncLyricsUI(lyricSettings);
   void refreshAudioDeviceList();
 }
 function updateQuality() {
@@ -1815,6 +1899,22 @@ document.addEventListener("click", (e) => {
     case "edit-genres":
       void editGenres();
       break;
+    case "lyric-reset":
+      Object.assign(lyricSettings, defaultLyricsSettings);
+      lyricsPane.setStyle(lyricSettings);
+      syncLyricsUI(lyricSettings);
+      saveLyricsSettings(lyricSettings);
+      notify("歌词参数已恢复默认。");
+      break;
+    case "lyric-color-reset":
+      // "Follow the theme" is the absence of a value, not a stored colour, so the
+      // property is removed and the stylesheet fallback takes over again.
+      if (target.dataset.lyricKey === "accent") lyricSettings.accent = "";
+      else lyricSettings.color = "";
+      lyricsPane.setStyle(lyricSettings);
+      syncLyricsUI(lyricSettings);
+      saveLyricsSettings(lyricSettings);
+      break;
     case "save-online":
       void (async () => {
         try {
@@ -1854,6 +1954,17 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("input", (e) => {
   const el = e.target as HTMLInputElement;
+  // The lyric controls are sliders and colour pickers, so `input` already gives
+  // live feedback; the pane and the in-panel preview are re-tokened together so
+  // the sample can never disagree with what will play.
+  if (el.dataset.lyric || el.dataset.lyricColor) {
+    if (applyLyricControl(el, lyricSettings)) {
+      lyricsPane.setStyle(lyricSettings);
+      const preview = document.getElementById("lyric-preview");
+      if (preview) applyLyricTokens(preview, lyricSettings);
+      saveLyricsSettings(lyricSettings);
+    }
+  }
   if (el.dataset.quality && el.type === "range") {
     renderQuality = normalizeQuality({
       ...renderQuality,

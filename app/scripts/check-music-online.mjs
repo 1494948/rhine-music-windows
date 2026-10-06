@@ -8,20 +8,26 @@ import {
   ONLINE_TTL_MS,
   PROVIDER_HOSTS,
   albumFingerprint,
+  titleVariants,
 } from './album-online.mjs';
 
 /**
  * Contract check for the online album supplement.
  *
  * The fetcher is injected, so every branch is reachable without a network:
- * agreement, near miss, unreachable host, overall deadline, cache hit and TTL
- * expiry. Two promises are asserted hardest, because they are the ones a
+ * agreement, near miss, a wrong suggestion mid, a wrong Baike lemma,
+ * unreachable hosts, an overall deadline, a rate limit, a cache hit and TTL
+ * expiry. Three promises are asserted hardest, because they are the ones a
  * reviewer cannot otherwise see:
  *
  *   1. Nothing is invented. A fact may only carry a label this module produces
  *      itself, prose only ever comes from a quoted source, and every adopted
  *      source carries a licence and a URL.
- *   2. A dead host is not re-asked. One connect failure must take that provider
+ *   2. A wrong answer is rejected, not smoothed over. Both domestic sources
+ *      return a confidently wrong record for an ambiguous album name — QQ 音乐
+ *      hands back a different album's mid, 百度百科 a different lemma — so both
+ *      guards are driven here with the wrong payload.
+ *   3. A dead host is not re-asked. One connect failure must take that provider
  *      out of rotation and persist the decision, or a black-holed DNS entry
  *      costs every album in the library a full timeout.
  */
@@ -32,6 +38,9 @@ const FACT_LABELS = new Set([
   '线上首次发行',
   '年份差异',
   '线上匹配度',
+  '线上发行日期',
+  '唱片公司',
+  '线上收录曲目',
   '商店发行日期',
   '商店流派',
   '商店收录曲目',
@@ -41,6 +50,8 @@ const FACT_LABELS = new Set([
 const HIT = { id: 'album-aaaa1111', title: '测试专辑', artist: '测试歌手', year: 2025 };
 const OFF_YEAR = { id: 'album-cccc3333', title: '测试专辑', artist: '测试歌手', year: 2001 };
 const NEAR_MISS = { id: 'album-bbbb2222', title: '另一个专辑', artist: '别的歌手', year: 1997 };
+
+const PROSE = '《测试专辑》是测试歌手于 2025 年推出的第十张录音室专辑，共收录十首曲目，由制作人长期合作完成，被视作其创作阶段的总结。';
 
 /** A fetch stand-in that routes by hostname and records every host it sees. */
 function makeFetcher(routes) {
@@ -80,6 +91,9 @@ const MUSICBRAINZ_HIT = () => ({
   ],
 });
 
+/** No candidate agrees with the tag: a near-miss fixture, not an error. */
+const MUSICBRAINZ_EMPTY = () => ({ 'release-groups': [] });
+
 const ITUNES_HIT = () => ({
   results: [
     {
@@ -94,15 +108,39 @@ const ITUNES_HIT = () => ({
   ],
 });
 
-/** Wikipedia is the network this build cannot reach; it must stay best-effort. */
-const WIKI_DOWN = () => new Error('connect ECONNREFUSED 127.0.0.1:443');
+/**
+ * QQ 音乐's two endpoints live on one host, so the route branches on the path.
+ * `detail` is what the album endpoint answers — the seam the wrong-mid guard is
+ * driven through.
+ */
+function qqHost({
+  name = '测试专辑',
+  song = '测试歌手',
+  mid = 'mid-1',
+  detail = { name: '测试专辑', aDate: '2025-03-14', company: '测试唱片', desc: PROSE, list: Array.from({ length: 10 }, (_, i) => i + 1) },
+  suggest = { name, singer: [song], mid },
+} = {}) {
+  return (target) => {
+    if (target.pathname.endsWith('smartbox_new.fcg'))
+      return { data: { album: { itemlist: Array.isArray(suggest) ? suggest : [suggest] } } };
+    if (target.pathname.endsWith('fcg_v8_album_info_cp.fcg')) return { data: detail };
+    return { __http: 404 };
+  };
+}
 
-/** Every host the module is allowed to talk to, by suffix rule. */
-const HOST_ALLOWED = (host) =>
-  host === PROVIDER_HOSTS.musicbrainz ||
-  host === PROVIDER_HOSTS.itunes ||
-  host === 'www.wikidata.org' ||
-  host.endsWith(`.${PROVIDER_HOSTS.wikipedia}`);
+/** The store answered, but carries nothing for this album. */
+const ITUNES_EMPTY = () => ({ results: [] });
+
+/** 百度百科 answers with one lemma and no disambiguation handle. */
+const baikeHost = (abstract = PROSE) => () => ({ abstract });
+
+/** Both endpoint sets miss cleanly: nothing was found, nothing errored. */
+const qqEmpty = () => qqHost({ suggest: [] });
+const baikeEmpty = () => baikeHost('');
+
+/** Every host the module is allowed to talk to. No host outside this list. */
+const ALLOWED_HOSTS = new Set(Object.values(PROVIDER_HOSTS));
+const HOST_ALLOWED = (host) => ALLOWED_HOSTS.has(host);
 
 /** Waits for a condition instead of guessing at a fixed sleep. */
 async function waitFor(predicate, ms = 1500) {
@@ -122,10 +160,10 @@ try {
   // ---------------------------------------------------------------- 命中与装配
   {
     const fetcher = makeFetcher({
+      'c.y.qq.com': qqHost(),
+      'baike.baidu.com': baikeHost(),
       'musicbrainz.org': MUSICBRAINZ_HIT,
       'itunes.apple.com': ITUNES_HIT,
-      'zh.wikipedia.org': WIKI_DOWN,
-      'en.wikipedia.org': WIKI_DOWN,
     });
     const resolver = new AlbumOnlineResolver({ dataDir, fetcher, intervalMs: 0 });
 
@@ -134,10 +172,14 @@ try {
     assert.equal(payload.fingerprint, albumFingerprint(HIT));
     assert.ok(payload.checkedAt, 'a payload always records when it was checked');
 
-    // Only the safe hosts were contacted, and only through their own APIs.
-    assert.ok(fetcher.calls.length >= 2, 'the working providers were actually asked');
+    // Only the safe hosts were contacted, and the store was left alone: a
+    // domestic source answered, so no request is spent on Apple Music.
     const stray = [...new Set(fetcher.calls)].filter((host) => !HOST_ALLOWED(host));
     assert.deepEqual(stray, [], `unexpected host contacted: ${stray}`);
+    assert.ok(
+      !fetcher.calls.includes('itunes.apple.com'),
+      'the store is not asked once a domestic source answered',
+    );
 
     // Nothing invented: every label is one this module owns.
     assert.ok(payload.facts.length > 0);
@@ -146,13 +188,15 @@ try {
       assert.ok(fact.value, `fact ${fact.label} carries no value`);
     }
     const labels = new Set(payload.facts.map((fact) => fact.label));
-    for (const expected of ['线上专辑类型', '线上首次发行', '线上匹配度', '商店发行日期', '商店流派', '商店收录曲目', '版权声明'])
+    for (const expected of ['线上发行日期', '唱片公司', '线上收录曲目', '线上专辑类型', '线上首次发行', '线上匹配度'])
       assert.ok(labels.has(expected), `missing fact ${expected}`);
     assert.equal(payload.facts.find((fact) => fact.label === '线上专辑类型').value, 'Album');
 
-    // Both working sources are attributed, with a licence and a link.
+    // Only the sources whose content actually reached the panel are credited.
+    // 百度百科 answered with a usable abstract but lost the prose race to QQ 音乐
+    // (assembly order), so it must not be listed as a source of that paragraph.
     const names = payload.sources.map((source) => source.name).sort();
-    assert.deepEqual(names, ['Apple Music 商店（CN）', 'MusicBrainz']);
+    assert.deepEqual(names, ['MusicBrainz', 'QQ 音乐']);
     for (const source of payload.sources) {
       assert.ok(source.url?.startsWith('https://'), `source ${source.name} has no https link`);
       assert.ok(source.license, `source ${source.name} has no licence`);
@@ -163,23 +207,31 @@ try {
     assert.deepEqual(
       payload.providers.map((provider) => [provider.id, provider.status]),
       [
+        ['qq', 'ok'],
+        ['baike', 'ok'],
         ['musicbrainz', 'ok'],
-        ['itunes', 'ok'],
-        ['wikipedia', 'failed'],
       ],
     );
-    const wiki = payload.providers.find((provider) => provider.id === 'wikipedia');
-    assert.match(wiki.detail, /连接失败|无法连接|connect/i, 'the failure reason must be readable');
-    assert.ok(payload.searchUrl?.startsWith('https://'), 'a search link is offered as a way out');
+
+    // The quoted paragraph is attributed to the provider that supplied it.
+    const intro = payload.blocks.find((block) => block.heading === '专辑简介');
+    assert.ok(intro, 'the quoted abstract becomes 专辑简介');
+    assert.equal(intro.body, PROSE);
+    assert.equal(intro.source.name, 'QQ 音乐');
 
     // The assembled sentence follows the provider order, not the completion
     // order, so the same album never reads back differently.
     const background = payload.blocks.find((block) => block.heading === '发行背景');
     assert.ok(background, 'a 发行背景 block is assembled from the returned fields');
-    const first = background.body.indexOf('公开条目记录其首次发行');
-    const second = background.body.indexOf('商店记录的上架日期');
-    assert.ok(first >= 0 && second > first, 'provider order decides the sentence order');
-    assert.ok(background.body.includes('商店归类为 流行'));
+    assert.ok(background.body.includes('公开条目记录其发行于 2025 年 3 月 14 日'));
+    assert.ok(background.body.includes('由 测试唱片 发行'));
+    // QQ 音乐 and MusicBrainz state the same release date. The sentence slot for
+    // it is filled once, so the reader is not told the same date twice.
+    assert.equal(
+      background.body.split('2025 年 3 月 14 日').length - 1,
+      1,
+      'a release date stated by two sources is said once',
+    );
     assert.ok(background.body.length <= MAX_BLOCK_BYTES + 64, 'a block is bounded in size');
     // 发行背景 is a summary, so it must not masquerade as a quoted source.
     assert.equal(background.source, undefined);
@@ -200,23 +252,12 @@ try {
 
     const forced = await resolver.resolve(HIT, { force: true });
     assert.ok(fetcher.calls.length > before, 'force re-reads the sources');
-    assert.equal(
-      forced.providers.find((provider) => provider.id === 'wikipedia').status,
-      'skipped',
-      'the failed host stays out of rotation',
+    // A provider that never failed stays in rotation; only a connect failure
+    // earns the breaker.
+    assert.ok(
+      forced.providers.every((provider) => provider.status === 'ok'),
+      'a healthy provider is never taken out of rotation',
     );
-    assert.match(
-      forced.providers.find((provider) => provider.id === 'wikipedia').detail,
-      /暂停/,
-    );
-
-    // -------------------------------------------------------- 近失不采用
-    const miss = await resolver.resolve(NEAR_MISS);
-    assert.equal(miss.status, 'empty', 'a near miss is reported as empty, not as a hit');
-    assert.equal(miss.blocks.length, 0);
-    assert.equal(miss.facts.length, 0);
-    assert.equal(miss.sources.length, 0, 'nothing adopted means nothing to attribute');
-    assert.equal(typeof miss.error, 'string', 'an empty result explains itself');
 
     // A cache file is written beside the library data, keyed by album identity.
     const cacheFile = path.join(dataDir, 'album-online', `${HIT.id}.json`);
@@ -236,6 +277,69 @@ try {
       !refreshed.blocks.some((block) => block.heading === '陈旧'),
       'an expired entry is not served',
     );
+  }
+
+  // ------------------------------------------------------------ 错答必须拒绝
+  {
+    // Both domestic sources answer confidently and both answers are wrong:
+    // QQ 音乐 suggests a mid whose album endpoint returns a different record,
+    // and 百度百科 resolves the keyword to a lemma about something else. The
+    // near miss must not be adopted, and the store must not be credited either.
+    const wrongDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rhine-online-wrong-'));
+    try {
+      const fetcher = makeFetcher({
+        'c.y.qq.com': qqHost({ detail: { name: '另一个专辑', aDate: '1999-01-01', company: '别的唱片', desc: '这是另一张专辑的简介。' } }),
+        'baike.baidu.com': baikeHost('丝绸之路是古代连接中国与中亚、西亚以及欧洲的交通路线，其影响持续到近代。'),
+        'musicbrainz.org': MUSICBRAINZ_EMPTY,
+        'itunes.apple.com': ITUNES_EMPTY,
+      });
+      const resolver = new AlbumOnlineResolver({ dataDir: wrongDir, fetcher, intervalMs: 0 });
+      const payload = await resolver.resolve(HIT);
+
+      assert.equal(payload.status, 'empty', 'a confirmed mismatch is empty, not a hit');
+      assert.equal(payload.blocks.length, 0, 'a wrong record contributes no paragraph');
+      assert.equal(payload.facts.length, 0, 'a wrong record contributes no field');
+      assert.equal(payload.sources.length, 0, 'nothing adopted means nothing to attribute');
+      assert.equal(typeof payload.error, 'string', 'an empty result explains itself');
+
+      // The reasons are readable and name the offending record, so a user can
+      // tell "the source had nothing" from "the source had the wrong thing".
+      const qq = payload.providers.find((provider) => provider.id === 'qq');
+      assert.match(qq.detail, /另一个专辑/, 'the mismatch names the album that came back');
+      const baike = payload.providers.find((provider) => provider.id === 'baike');
+      assert.match(baike.detail, /词条不是本专辑|没有提到/, 'the wrong lemma is rejected by name');
+
+      // Nothing was adopted, so the store *was* asked — and its rows do not
+      // correspond to this album either.
+      assert.ok(fetcher.calls.includes('itunes.apple.com'), 'the store gets its turn');
+      assert.equal(payload.providers.length, 4);
+      assert.equal(payload.providers.at(-1).id, 'itunes');
+    } finally {
+      await fs.rm(wrongDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
+
+  // -------------------------------------------------------- 近失不采用
+  {
+    const missDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rhine-online-miss-'));
+    try {
+      const fetcher = makeFetcher({
+        'c.y.qq.com': qqHost(),
+        'baike.baidu.com': baikeHost(),
+        'musicbrainz.org': MUSICBRAINZ_EMPTY,
+        'itunes.apple.com': ITUNES_HIT,
+      });
+      const resolver = new AlbumOnlineResolver({ dataDir: missDir, fetcher, intervalMs: 0 });
+      const miss = await resolver.resolve(NEAR_MISS);
+      assert.equal(miss.status, 'empty', 'a near miss is reported as empty, not as a hit');
+      assert.equal(miss.blocks.length, 0);
+      assert.equal(miss.facts.length, 0);
+      assert.equal(miss.sources.length, 0, 'nothing adopted means nothing to attribute');
+      assert.equal(typeof miss.error, 'string', 'an empty result explains itself');
+      assert.equal(miss.searchUrl, `https://www.baidu.com/s?wd=${encodeURIComponent('另一个专辑 别的歌手 专辑')}`);
+    } finally {
+      await fs.rm(missDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 
   // ------------------------------------------------------------ 全部不可达
@@ -258,7 +362,10 @@ try {
       'the breaker is persisted so it survives a restart',
     );
     const breakers = JSON.parse(await fs.readFile(breakerFile, 'utf8'));
-    assert.deepEqual(Object.keys(breakers).sort(), ['itunes', 'musicbrainz', 'wikipedia']);
+    // Only the three providers that were actually asked. Apple Music is held
+    // back until all three domestic sources come back empty, and an unreachable
+    // host is never "empty", so it earned no breaker here.
+    assert.deepEqual(Object.keys(breakers).sort(), ['baike', 'musicbrainz', 'qq']);
 
     // A resolver restarted over the same data dir must not re-probe the hosts.
     let calls = 0;
@@ -296,7 +403,7 @@ try {
     assert.equal(exists, false, 'a slow host is not marked down');
   }
 
-  // -------------------------------------------------- 限流重试与来源记账
+  // -------------------------------------------------------------- 限流重试
   {
     const retryDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rhine-online-retry-'));
     try {
@@ -305,11 +412,12 @@ try {
       // only one: an unbounded retry would turn a rate limit into a hammer.
       let attempts = 0;
       const flaky = makeFetcher({
+        'c.y.qq.com': qqEmpty,
+        'baike.baidu.com': baikeEmpty,
         'musicbrainz.org': () => {
           attempts++;
           return attempts === 1 ? { __http: 503 } : MUSICBRAINZ_HIT();
         },
-        'itunes.apple.com': () => ({ __http: 500 }),
       });
       const resolver = new AlbumOnlineResolver({
         dataDir: retryDir,
@@ -322,16 +430,45 @@ try {
       const brainz = payload.providers.find((provider) => provider.id === 'musicbrainz');
       assert.equal(brainz.status, 'ok', 'a single 503 is retried');
       assert.equal(attempts, 2, 'the retry happens exactly once');
+      assert.ok(
+        !flaky.calls.includes('itunes.apple.com'),
+        'one source answering is enough to skip the store',
+      );
+    } finally {
+      await fs.rm(retryDir, { recursive: true, force: true }).catch(() => {});
+    }
+  }
 
-      // A 500 is a real error, not a rate limit, so it is not retried and the
-      // store is reported as unreachable rather than as empty.
+  // ------------------------------------------- 商店失败不当作「没有收录」
+  {
+    const storeDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rhine-online-store-'));
+    try {
+      // All three domestic sources ran and found nothing, so the store is asked;
+      // both storefronts then error. That is unreachable, not "not carried", and
+      // the panel must not report "nothing found" for a store it never reached.
+      let storeCalls = 0;
+      const flaky = makeFetcher({
+        'c.y.qq.com': qqEmpty,
+        'baike.baidu.com': baikeEmpty,
+        'musicbrainz.org': MUSICBRAINZ_EMPTY,
+        'itunes.apple.com': () => {
+          storeCalls++;
+          return { __http: 500 };
+        },
+      });
+      const resolver = new AlbumOnlineResolver({ dataDir: storeDir, fetcher: flaky, intervalMs: 0 });
+      const payload = await resolver.resolve(HIT);
       const store = payload.providers.find((provider) => provider.id === 'itunes');
       assert.equal(store.status, 'failed', 'a store that only ever errored is not "empty"');
       assert.match(store.detail, /HTTP 500/);
-      assert.equal(flaky.calls.filter((host) => host === 'itunes.apple.com').length, 2,
-        'both storefronts were tried, and neither was retried');
+      assert.equal(storeCalls, 2, 'both storefronts were tried, and neither was retried');
+      // The three domestic sources did answer, so this is "not found", not
+      // "unreachable": the top-level message stays actionable and the store's
+      // transport error stays where it belongs, against that provider.
+      assert.equal(payload.status, 'empty');
+      assert.match(payload.error, /补全名称、歌手与年份/, 'the reader gets something to act on');
     } finally {
-      await fs.rm(retryDir, { recursive: true, force: true }).catch(() => {});
+      await fs.rm(storeDir, { recursive: true, force: true }).catch(() => {});
     }
   }
 
@@ -351,6 +488,19 @@ try {
       albumFingerprint({ title: 'A', artist: 'C' }),
       albumFingerprint({ title: 'A', artist: 'C', year: 2025 }),
     );
+  }
+
+  // ------------------------------------------------------------ 标题清洗
+  {
+    // A local title carries the packaging; the online sources index the album.
+    assert.deepEqual(titleVariants('燕尾蝶<下定爱的决心>'), ['燕尾蝶']);
+    assert.deepEqual(titleVariants('爱的大游行Live全记录 (Live)'), ['爱的大游行Live全记录']);
+    assert.deepEqual(titleVariants('我好吗? - Single'), ['我好吗?']);
+    // A `/` separates two halves; both are offered, and the fan-out is capped.
+    assert.deepEqual(titleVariants('A/B/C'), ['A/B/C', 'A']);
+    // A plain title stays itself, exactly once.
+    assert.deepEqual(titleVariants('范特西'), ['范特西']);
+    assert.ok(titleVariants('A/B/C/D').length <= 2, 'a lookup can never fan out');
   }
 } finally {
   await fs.rm(dataDir, { recursive: true, force: true }).catch(() => {});

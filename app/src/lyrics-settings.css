@@ -1,0 +1,71 @@
+/* 「歌词」 settings module.
+   Only the parts the shared panel language does not already cover live here: the
+   live sample and the two colour swatches. The rows themselves reuse
+   `.settings-row` / `.settings-slider` from music.css so this section cannot
+   drift away from the rest of the panel. */
+
+.lyric-preview {
+  position: relative;
+  margin: 10px 0 14px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface);
+  overflow: hidden;
+}
+
+/* The sample reuses `.lyric-line` verbatim, which is absolutely positioned and
+   padded from `--line-h`. This stage gives it the three rows it needs. */
+.lyric-preview-stage {
+  position: relative;
+  height: calc(var(--line-h, 52px) * 3);
+}
+
+/* The pane hides overflow and fades its edges; the sample shows the same band so
+   the settings that act on that band are visible while they are being changed. */
+.lyric-preview-stage {
+  -webkit-mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 84%, transparent 100%);
+  mask-image: linear-gradient(180deg, transparent 0, #000 12%, #000 84%, transparent 100%);
+}
+
+.lyric-swatches {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.lyric-swatches input[type="color"] {
+  width: 38px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: none;
+  cursor: pointer;
+}
+
+.lyric-swatches input[type="color"]::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.lyric-swatches input[type="color"]::-webkit-color-swatch {
+  border: 0;
+  border-radius: 3px;
+}
+
+.lyric-swatches .text-button[disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+
+#lyric-settings .lyric-settings-foot {
+  margin-top: 4px;
+}
+
+/* The idle float is part of the preview's job: a still frame cannot show it, so
+   the sample keeps animating while the panel is open. */
+@media (prefers-reduced-motion: reduce) {
+  .lyric-preview .lyric-line {
+    animation: none;
+  }
+}

@@ -15,6 +15,14 @@
   will-change: transform, opacity;
 }
 
+/* The panel is patched in place rather than rebuilt, so it needs a stable parent
+   to live in — see renderDetail. `display: contents` means the parent is not a
+   box at all, so `.album-archive` keeps behaving as a direct child of the
+   reading column: same margins, same hairline, no extra wrapper to collapse. */
+.archive-mount {
+  display: contents;
+}
+
 .album-archive {
   display: flex;
   flex-direction: column;
