@@ -95,13 +95,13 @@ MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" npm run mu
 
 **二级验证 —— 真机分发副本**：直接用 `releases/rhine-music-local-mod/v0.3.0-local.1/` 里的
 `RhineMusic.exe` 实测（这就是本项目的交付形态，不再需要另造副本）。基准物
-`C:\Users\徐梓烽\Downloads\Rhine-Music-Windows-0.3.0-二次修改\` **只读，禁止写回**。
+`C:\Users\<用户名>\Downloads\Rhine-Music-Windows-0.3.0-二次修改\` **只读，禁止写回**。
 
 **打包（可复现，一条命令）**：
 
 ```bash
 export PATH="/usr/bin:/bin:/c/Windows/System32:$PATH"
-N="C:/Users/徐梓烽/.workbuddy/binaries/node/versions/22.22.2-3/node.exe"
+N="C:/Users/<用户名>/.workbuddy/binaries/node/versions/22.22.2-3/node.exe"
 cd "C:/AI Document/projects/rhine-music-local-mod"
 "$N" scripts/package-windows.mjs                      # 输出到 releases/rhine-music-local-mod/v0.3.0-local.1
 "$N" scripts/package-windows.mjs --force              # 目录非空时覆盖
@@ -134,7 +134,7 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 - **基座是第三方二次修改版，改动内容无文档**：与上游 v0.3.0 的差异未知。
   唯一可信基准是 `Downloads\Rhine-Music-Windows-0.3.0-二次修改\` 原件，**不要动它**；
   需要对比时另复制一份副本。
-- **中文用户名路径**（`C:\Users\徐梓烽`）：项目内路径保持纯 ASCII。
+- **中文用户名路径**（`C:\Users\<用户名>`）：项目内路径保持纯 ASCII。
 - **本机 git 用 `C:\Program Files\Git\cmd\git.exe`**（有凭据管理器）；传路径参数写 `C:/...`，
   不要用 Git Bash 的 `/c/...` 形式。沙箱对"多语句 + cd 串联"的长命令偶发拒绝，
   改用 `git -C "C:/..." <命令>` 单条执行更稳。
@@ -263,12 +263,12 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
   ```bash
   # 1) 准备可写的数据副本（服务启动时会自动全库重扫并改写数据目录，故不可指向真实安装）
   export MSYS2_ARG_CONV_EXCL='*'
-  robocopy "C:/Users/徐梓烽/Downloads/Rhine-Music-Windows-0.3.0-二次修改/music-data-v3" \
+  robocopy "C:/Users/<用户名>/Downloads/Rhine-Music-Windows-0.3.0-二次修改/music-data-v3" \
            "C:/AI Document/playground/rhine-music-local-mod-data" /E /NFL /NDL /NP /R:2 /W:2
   # 2) 起服务（必须从 Bash 侧起，见下面的环境事实）
   cd "C:/AI Document/projects/rhine-music-local-mod/app"
   MUSIC_DATA_DIR="C:/AI Document/playground/rhine-music-local-mod-data" \
-    "C:/Users/徐梓烽/.workbuddy/binaries/node/versions/22.22.2-3/node.exe" \
+    "C:/Users/<用户名>/.workbuddy/binaries/node/versions/22.22.2-3/node.exe" \
     scripts/music-server.mjs --port 5173
   # 3) 用浏览器打开 http://127.0.0.1:5173/
   ```
@@ -310,7 +310,7 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 
 | 项 | 实测值 |
 |---|---|
-| Node | 22.22.2（managed，`C:\Users\徐梓烽\.workbuddy\binaries\node\versions\22.22.2-3\node.exe`） |
+| Node | 22.22.2（managed，`C:\Users\<用户名>\.workbuddy\binaries\node\versions\22.22.2-3\node.exe`） |
 | vite（lock 实际解析） | 7.3.6 |
 | esbuild | 0.28.2 |
 | `npx tsc --noEmit` | 通过，退出码 0 |
@@ -320,7 +320,7 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | `app/dist` 回灌 | `robocopy /MIR` 成功（复制 8 / 清除 5 个过期哈希资产 / 失败 0），回灌后 **175 个文件与 playground 构建逐文件 MD5 一致**；`index.html` 已指向新哈希 `index-vOTKXiS1.js`（应用主体为 `music-app-Dfxe6QmK.js`） |
 | `check-music-player` | **本轮修好**：`music-player.ts` 的 `"./native-playback"` 无扩展名，Node 类型剥离下解析不到 → 补 `.ts`；随后暴露 `NativePlaybackClient` 构造期直接读 `window`，故 `refresh()`/构造函数/`resolveTrackUrl()` 加宿主判空（无 `window` 时 `transport` 落回已有的 `"none"`）。**4/4 通过** |
 | `check-music-model` | **仍失败，属基线既有缺陷**：`day retains its frosted finish` 断言不符。该脚本只导入 `music-model.ts`（`git diff` 为空，本轮未碰），故与本轮改动无关；未修改，需先确认原意 |
-| 真实曲库规模 | **79 张专辑 / 774 首曲目**，音乐根 `C:\Users\徐梓烽\Music\Music` |
+| 真实曲库规模 | **79 张专辑 / 774 首曲目**，音乐根 `C:\Users\<用户名>\Music\Music` |
 | **歌词覆盖率（真实全库 774 首逐首请求，0 失败，15.9s ≈ 20ms/首）** | 内嵌同步 SYLT **417（53.9%）**、无歌词 286（37.0%）、同名 `.lrc` **54（7.0%）**、内嵌非同步 USLT **17（2.2%）** → **63.1% 的曲目有歌词，其中 60.9% 可逐字同步** |
 | 真实 `.lrc` 通道实测 | `Natural.flac`（配同名 `.lrc`）→ `{"source":"lrc","text":"\r\n[00:00.00]Natural - Imagine Dragons\r\n..."}`；该 `.lrc` 为 CRLF + 首行空行，解析正确 |
 | 真实 SYLT 通道实测 | 周杰伦《爱情悬崖》等 417 首 → `{"source":"sylt","sync":[{"text":"爱情悬崖 - 周杰伦 (Jay Chou)","timestamp":0},...]}` |
@@ -406,4 +406,5 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 2026-10-06 | **第三轮 P2（歌词动效对齐 AMLL）**：`music-lyrics.ts` 新增 `splitUnits`（汉字逐字/拉丁按词/空白成单元）+ `unitReveal`（逐字进度，单调不回退）；`music-lyrics-pane.ts` 唱行惰性拆分为逐字单元（`--g` 每帧只写变化的单元）、行进入/退出（`--ly-enter` 四级）、间奏律动点（`setInterlude` 类切换，纯 CSS 呼吸）；`music-lyrics-switch.css` 逐字上浮/呼吸、`lyric-settle` 过冲、高亮行放大 `--ly-active-scale`、`.lyric-units` 包裹层（修 `.lyric-fill` 是 flex 会把单元变 flex-item 不换行的坑）；`check-music-lyrics` 补 `splitUnits`/`unitReveal` 断言与 `--g` 契约 | 用户要求"以画面为重、性能可舍"，逐字层从一行一个裁剪百分比升级为逐字独立变换；每个新增动效都必须可关可调 |
 | 2026-10-06 | **第三轮 P3（歌词参数模块补全）**：`lyrics-settings.ts` 参数 13→20 项、四组分类（字号版式/颜色高亮/动效/时间）、每项复位 + 分组复位、三套预设（克制/Apple Music/AMLL）、JSON 导入导出（`applyLyricPatch` 统一钳位）、预览可选歌选行 + 跟随播放（`lyricPreviewMarkup`/`setLyricPreviewSample`）；`music-app.ts` 接线（`previewTracks`/`previewDocument`/`syncPreviewFollow` 等 + 新动作分发）；`check-music-lyrics` 补 P3 接线断言 | 用户要求参数模块"专门的模块"且"每项可关可调"，预览要与真实面板同源防漂移 |
 | 2026-10-06 | **第三轮 P0（打包）+ 收尾**：`vite build` 106 模块落入 `playground/rhine-build-p3`，`robocopy /MIR` 回灌 `app/dist`（175 文件、入口 `index-B7tTgcKt.js`、MD5 一致）；`scripts/package-windows.mjs` 默认输出改 `.3`、新增**入口哈希一致性断言**（包内 `index.html` 引用的入口必须存在于 `assets/`）；产出 `releases/rhine-music-local-mod/v0.3.0-local.3/`（515MB，全部 MD5 一致）；新增 `docs/发布说明-v0.3.0-local.3.md` | 修好 `check-music-model` 基线缺陷后打包，让用户能双击看到 P0–P3 效果；入口断言防"包存在≠包新"再犯 |
+| 2026-10-06 | **P4 后：发布到 GitHub（新分支）**。① 新增根 `README.md`（公开分支的门面：非官方衍生声明、P1–P4 改动总表、构建与放包说明、许可边界）；② 隐私脱敏——`徐梓烽` 在 5 个受版本管理文件里共 12 处，全部替换为 `<用户名>` 占位符，`scripts/package-windows.mjs` 的 `DEFAULT_BASE` 改由 `os.homedir()` 推导（不再硬编码路径，可用 `--base` / `RHINE_BASE` 覆盖）；③ `git remote add origin https://github.com/1494948/rhine-music-windows.git`，`ls-remote` 预检确认远端只有 `main`、目标分支名不存在；④ 源码推为新分支 `rhine-music-local-mod`；⑤ 发布包剥离私人数据后打 ZIP 走 GitHub Release 附件 | 用户明确要求"原本的 github 仓库新开一个分支，把源代码和发布版弄上去"：exe/dll 各 117 MB 超 GitHub 单文件 100 MB 硬限，发布版只能走 Release 附件；发布包内 `music-data-v3` 含真实曲库索引（79 张专辑 + 16 张真实封面 + 私人绝对路径），公开前必须剥离 |
 | 2026-10-06 | **第三轮 P4（数据源扩充）**：`album-online.mjs` 新增 `netease()`（`/api/search/get/web` 定 id → `/api/v1/album/{id}` 取 `description` 长简介，`opencc-js` 繁转简 + 空白压缩，`publishTime`→`millisToDate`，双重复核防错答）与 `discogs()`（年份/流派/载体，**不带 artist 参数**——Discogs 用拉丁化名匹配中文歌手名返回 0 行，按 "Artist - Title" 拆行匹配）、`wikidata()`（P577 发行日期，`wbsearchentities`+`wbgetentities` 用 alias 匹配中文 label，独立 3s 预算）；`resolve()` 第一阶段加 netease、第二阶段（末位）加 discogs/wikidata；`request()` 支持 per-call 超时；新增 `check-music-online-sources.mjs` 可达性自检（Node fetch 逐主机报 status/耗时/JSON）并纳入 `check:music`；`check-music-online.mjs` 补 netease/discogs/wikidata 的命中/错答拒绝/繁转简/末位门控断言；`music-app.ts`/`music-archive.ts` 来源文案加网易云。**覆盖率 39/79(49.4%) → 60/78(76.9%)，+27.5pp，报错 0**（netease 19 张、discogs 1 张） | 用户明确要求"把 P4 也做了，专辑背景知识用爬虫爬取"；网易云 v1 接口免登录可答且提供 QQ 缺失的长简介（19 张命中里 5 张是 QQ 没覆盖的），Discogs/Wikidata 按计划作 best-effort 末位、失败不影响整体 |

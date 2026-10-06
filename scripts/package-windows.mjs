@@ -23,15 +23,23 @@
 
 import { promises as fs } from 'node:fs'
 import { spawn } from 'node:child_process'
+import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const APP = path.join(REPO, 'app')
 
-/** The third-party build this modification sits on top of. Treated as read-only. */
-const DEFAULT_BASE = 'C:/Users/徐梓烽/Downloads/Rhine-Music-Windows-0.3.0-二次修改'
-const DEFAULT_OUT = 'C:/AI Document/releases/rhine-music-local-mod/v0.3.0-local.4'
+/**
+ * The third-party build this modification sits on top of. Treated as read-only.
+ *
+ * Resolved from the home directory rather than a literal path, so the script
+ * carries no machine-specific user name and works on any Windows profile.
+ * Override with `--base <dir>` or `RHINE_BASE=`.
+ */
+const DEFAULT_BASE =
+  process.env.RHINE_BASE ?? path.join(os.homedir(), 'Downloads', 'Rhine-Music-Windows-0.3.0-二次修改')
+const DEFAULT_OUT = path.join(REPO, '..', '..', 'releases', 'rhine-music-local-mod', 'v0.3.0-local.4')
 /** Files the launcher loads from its own directory. */
 const SHELL_FILES = ['RhineMusic.exe', 'libmpv-2.dll', 'app.ico', 'no-log.flag', 'LICENSE', 'NOTICE.md', 'README-Windows.md']
 /** Reference docs copied from the repo into the package root. */
