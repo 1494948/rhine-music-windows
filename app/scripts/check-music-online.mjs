@@ -45,6 +45,13 @@ const FACT_LABELS = new Set([
   '商店流派',
   '商店收录曲目',
   '版权声明',
+  '网易云发行日期',
+  '网易云唱片公司',
+  '网易云收录曲目',
+  'Discogs 发行年份',
+  'Discogs 流派',
+  'Discogs 载体',
+  'Wikidata 发行日期',
 ]);
 
 const HIT = { id: 'album-aaaa1111', title: '测试专辑', artist: '测试歌手', year: 2025 };
@@ -128,6 +135,46 @@ function qqHost({
   };
 }
 
+/**
+ * 网易云's two endpoints live on one host, so the route branches on the path.
+ * `detail` is the album endpoint's answer — the seam the wrong-id guard is
+ * driven through, mirroring QQ 音乐's wrong-mid guard.
+ */
+function neteaseHost({
+  name = '测试专辑',
+  artist = '测试歌手',
+  id = 'netease-1',
+  detail = { name: '测试专辑', publishTime: Date.parse('2025-03-14T00:00:00Z'), company: '测试唱片', size: 10, description: '《测试专辑》是测试歌手推出的第十张录音室专辑。' },
+  suggest = [{ id, name, artist: { name: artist } }],
+} = {}) {
+  return (target) => {
+    if (target.pathname.endsWith('search/get/web'))
+      return { result: { albums: Array.isArray(suggest) ? suggest : [suggest] } };
+    if (/\/api\/v1\/album\/[\w-]+$/.test(target.pathname)) return { album: detail };
+    return { __http: 404 };
+  };
+}
+
+/** Discogs answers with a flat results list; title reads "Artist - Title". */
+function discogsHost({ title = '测试歌手 - 测试专辑', year = 2025, genre = ['流行'], format = ['CD', 'Album'], id = 'd-1' } = {}) {
+  return () => ({ results: [{ title, year, genre, format, id }] });
+}
+
+/** Wikidata branches on the MediaWiki `action` parameter. */
+function wikidataHost({
+  search = [{ id: 'Q123', label: '测试专辑', description: '测试歌手发行的专辑' }],
+  entity = { claims: { P577: [{ rank: 'normal', mainsnak: { datavalue: { value: { time: '+2025-03-14T00:00:00Z' } } } }] }, labels: { zh: { value: '测试专辑' } }, aliases: {} },
+} = {}) {
+  return (target) => {
+    if (target.searchParams.get('action') === 'wbsearchentities') return { search: Array.isArray(search) ? search : [search] };
+    if (target.searchParams.get('action') === 'wbgetentities') {
+      const id = String(target.searchParams.get('ids') ?? 'Q123').split('|')[0];
+      return { entities: { [id]: entity } };
+    }
+    return { __http: 404 };
+  };
+}
+
 /** The store answered, but carries nothing for this album. */
 const ITUNES_EMPTY = () => ({ results: [] });
 
@@ -163,6 +210,7 @@ try {
       'c.y.qq.com': qqHost(),
       'baike.baidu.com': baikeHost(),
       'musicbrainz.org': MUSICBRAINZ_HIT,
+      'music.163.com': neteaseHost(),
       'itunes.apple.com': ITUNES_HIT,
     });
     const resolver = new AlbumOnlineResolver({ dataDir, fetcher, intervalMs: 0 });
@@ -196,7 +244,7 @@ try {
     // 百度百科 answered with a usable abstract but lost the prose race to QQ 音乐
     // (assembly order), so it must not be listed as a source of that paragraph.
     const names = payload.sources.map((source) => source.name).sort();
-    assert.deepEqual(names, ['MusicBrainz', 'QQ 音乐']);
+    assert.deepEqual(names, ['MusicBrainz', 'QQ 音乐', '网易云音乐']);
     for (const source of payload.sources) {
       assert.ok(source.url?.startsWith('https://'), `source ${source.name} has no https link`);
       assert.ok(source.license, `source ${source.name} has no licence`);
@@ -210,6 +258,7 @@ try {
         ['qq', 'ok'],
         ['baike', 'ok'],
         ['musicbrainz', 'ok'],
+        ['netease', 'ok'],
       ],
     );
 
@@ -263,7 +312,7 @@ try {
     const cacheFile = path.join(dataDir, 'album-online', `${HIT.id}.json`);
     const raw = JSON.parse(await fs.readFile(cacheFile, 'utf8'));
     assert.equal(raw.fingerprint, albumFingerprint(HIT));
-    assert.equal(raw.providers.length, 3);
+    assert.equal(raw.providers.length, 4);
 
     // An expired entry is not served. A fresh resolver proves it is the disk
     // TTL, not the in-memory cache, that decides.
@@ -281,17 +330,21 @@ try {
 
   // ------------------------------------------------------------ 错答必须拒绝
   {
-    // Both domestic sources answer confidently and both answers are wrong:
+    // The domestic sources answer confidently and the answers are wrong:
     // QQ 音乐 suggests a mid whose album endpoint returns a different record,
-    // and 百度百科 resolves the keyword to a lemma about something else. The
-    // near miss must not be adopted, and the store must not be credited either.
+    // 网易云 suggests an id whose v1 detail returns a different album, and
+    // 百度百科 resolves the keyword to a lemma about something else. The near
+    // miss must not be adopted, and the tail must not be credited either.
     const wrongDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rhine-online-wrong-'));
     try {
       const fetcher = makeFetcher({
         'c.y.qq.com': qqHost({ detail: { name: '另一个专辑', aDate: '1999-01-01', company: '别的唱片', desc: '这是另一张专辑的简介。' } }),
         'baike.baidu.com': baikeHost('丝绸之路是古代连接中国与中亚、西亚以及欧洲的交通路线，其影响持续到近代。'),
         'musicbrainz.org': MUSICBRAINZ_EMPTY,
+        'music.163.com': neteaseHost({ detail: { name: '另一个专辑', publishTime: Date.parse('1999-01-01T00:00:00Z'), company: '别的唱片', size: 5, description: '这是另一张专辑的简介。' } }),
         'itunes.apple.com': ITUNES_EMPTY,
+        'api.discogs.com': discogsHost({ title: '别的歌手 - 另一个专辑', year: 1999 }),
+        'www.wikidata.org': wikidataHost({ search: [] }),
       });
       const resolver = new AlbumOnlineResolver({ dataDir: wrongDir, fetcher, intervalMs: 0 });
       const payload = await resolver.resolve(HIT);
@@ -306,14 +359,18 @@ try {
       // tell "the source had nothing" from "the source had the wrong thing".
       const qq = payload.providers.find((provider) => provider.id === 'qq');
       assert.match(qq.detail, /另一个专辑/, 'the mismatch names the album that came back');
+      const netease = payload.providers.find((provider) => provider.id === 'netease');
+      assert.match(netease.detail, /另一个专辑/, 'the wrong 网易云 detail is rejected by name');
       const baike = payload.providers.find((provider) => provider.id === 'baike');
       assert.match(baike.detail, /词条不是本专辑|没有提到/, 'the wrong lemma is rejected by name');
 
-      // Nothing was adopted, so the store *was* asked — and its rows do not
+      // Nothing was adopted, so the tail *was* asked — and none of its rows
       // correspond to this album either.
       assert.ok(fetcher.calls.includes('itunes.apple.com'), 'the store gets its turn');
-      assert.equal(payload.providers.length, 4);
-      assert.equal(payload.providers.at(-1).id, 'itunes');
+      assert.ok(fetcher.calls.includes('api.discogs.com'), 'Discogs gets its turn');
+      assert.ok(fetcher.calls.includes('www.wikidata.org'), 'Wikidata gets its turn');
+      assert.equal(payload.providers.length, 7);
+      assert.equal(payload.providers.at(-1).id, 'wikidata');
     } finally {
       await fs.rm(wrongDir, { recursive: true, force: true }).catch(() => {});
     }
@@ -327,7 +384,10 @@ try {
         'c.y.qq.com': qqHost(),
         'baike.baidu.com': baikeHost(),
         'musicbrainz.org': MUSICBRAINZ_EMPTY,
+        'music.163.com': neteaseHost(),
         'itunes.apple.com': ITUNES_HIT,
+        'api.discogs.com': discogsHost(),
+        'www.wikidata.org': wikidataHost(),
       });
       const resolver = new AlbumOnlineResolver({ dataDir: missDir, fetcher, intervalMs: 0 });
       const miss = await resolver.resolve(NEAR_MISS);
@@ -362,10 +422,11 @@ try {
       'the breaker is persisted so it survives a restart',
     );
     const breakers = JSON.parse(await fs.readFile(breakerFile, 'utf8'));
-    // Only the three providers that were actually asked. Apple Music is held
-    // back until all three domestic sources come back empty, and an unreachable
-    // host is never "empty", so it earned no breaker here.
-    assert.deepEqual(Object.keys(breakers).sort(), ['baike', 'musicbrainz', 'qq']);
+    // Only the four primary providers that were actually asked. The tail
+    // (Apple Music / Discogs / Wikidata) is held back until all primary sources
+    // come back empty, and an unreachable host is never "empty", so it earned no
+    // breaker here.
+    assert.deepEqual(Object.keys(breakers).sort(), ['baike', 'musicbrainz', 'netease', 'qq']);
 
     // A resolver restarted over the same data dir must not re-probe the hosts.
     let calls = 0;
@@ -392,7 +453,7 @@ try {
     });
     const payload = await resolver.resolve(HIT);
     assert.equal(payload.status, 'error');
-    assert.equal(payload.providers.length, 3);
+    assert.equal(payload.providers.length, 4);
     for (const provider of payload.providers) {
       assert.equal(provider.status, 'failed');
       assert.match(provider.detail, /预算/, 'a missed budget says so');
@@ -418,6 +479,7 @@ try {
           attempts++;
           return attempts === 1 ? { __http: 503 } : MUSICBRAINZ_HIT();
         },
+        'music.163.com': neteaseHost({ suggest: [] }),
       });
       const resolver = new AlbumOnlineResolver({
         dataDir: retryDir,
@@ -433,6 +495,10 @@ try {
       assert.ok(
         !flaky.calls.includes('itunes.apple.com'),
         'one source answering is enough to skip the store',
+      );
+      assert.ok(
+        !flaky.calls.includes('api.discogs.com') && !flaky.calls.includes('www.wikidata.org'),
+        'one source answering is enough to skip the whole tail',
       );
     } finally {
       await fs.rm(retryDir, { recursive: true, force: true }).catch(() => {});
@@ -451,10 +517,13 @@ try {
         'c.y.qq.com': qqEmpty,
         'baike.baidu.com': baikeEmpty,
         'musicbrainz.org': MUSICBRAINZ_EMPTY,
+        'music.163.com': neteaseHost({ suggest: [] }),
         'itunes.apple.com': () => {
           storeCalls++;
           return { __http: 500 };
         },
+        'api.discogs.com': discogsHost({ title: '别的歌手 - 另一个专辑', year: 1999 }),
+        'www.wikidata.org': wikidataHost({ search: [] }),
       });
       const resolver = new AlbumOnlineResolver({ dataDir: storeDir, fetcher: flaky, intervalMs: 0 });
       const payload = await resolver.resolve(HIT);
@@ -501,6 +570,38 @@ try {
     // A plain title stays itself, exactly once.
     assert.deepEqual(titleVariants('范特西'), ['范特西']);
     assert.ok(titleVariants('A/B/C/D').length <= 2, 'a lookup can never fan out');
+  }
+
+  // ------------------------------------------------------------ 网易云繁转简
+  {
+    const twDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rhine-online-tw-'));
+    try {
+      // 网易云简介为繁体（含全角空格与换行）；契约是：繁转简、压缩空白、正文只保留简体。
+      const fetcher = makeFetcher({
+        'music.163.com': neteaseHost({
+          detail: {
+            name: '测试专辑',
+            publishTime: Date.parse('2025-03-14T00:00:00Z'),
+            company: '測試唱片',
+            size: 10,
+            description: '　這是繁體簡介，包含「雙截棍」與「紀念」等詞。\n　　第二行內容。',
+          },
+        }),
+      });
+      const resolver = new AlbumOnlineResolver({ dataDir: twDir, fetcher, intervalMs: 0 });
+      const outcome = await resolver.netease({ id: 'tw', title: '测试专辑', artist: '测试歌手', year: 2025 });
+      assert.equal(outcome.status, 'ok');
+      assert.ok(outcome.prose.includes('这是繁体简介'), '繁体简介被转为简体');
+      assert.ok(outcome.prose.includes('双截棍') && outcome.prose.includes('纪念'), '繁体词被正确转换');
+      assert.ok(!outcome.prose.includes('\n') && !outcome.prose.includes('　'), '全角空格与换行被压缩');
+      assert.equal(
+        outcome.facts.find((fact) => fact.label === '网易云唱片公司').value,
+        '测试唱片',
+        '唱片公司与简介一致地繁转简',
+      );
+    } finally {
+      await fs.rm(twDir, { recursive: true, force: true }).catch(() => {});
+    }
   }
 } finally {
   await fs.rm(dataDir, { recursive: true, force: true }).catch(() => {});

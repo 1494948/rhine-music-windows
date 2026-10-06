@@ -316,7 +316,7 @@ export function resolveAlbumArchive(
       // The search link is only worth offering while there is still no prose.
       ...(hasProse || !online.searchUrl ? {} : { searchUrl: online.searchUrl }),
       hint:
-        "线上内容逐条取自国内可访问的公开元数据源（QQ 音乐 / 百度百科 / MusicBrainz）并随附出处，与本机缓存 30 天。人工补录（content/album-archives.json）优先级高于线上内容。",
+        "线上内容逐条取自国内可访问的公开元数据源（QQ 音乐 / 网易云音乐 / 百度百科 / MusicBrainz）并随附出处，与本机缓存 30 天。人工补录（content/album-archives.json）优先级高于线上内容。",
     };
   }
 

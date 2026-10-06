@@ -13,7 +13,8 @@
 - 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板（四级来源）；需求 C 小白条详情⇄歌词切换（含视觉精修与惯性抛掷）；需求 D 歌词解析/接口/动效面板；**需求 B 的第四层「线上补充专辑详情与背景」已补全并真机实测**；`app/dist` 已回灌为最新构建（175 文件，MD5 校验一致）
 - **第二轮（2026-10-06）已完成**：需求 A 的第二轮修复（**图集脏矩形上传**，见 §6.2；**详情栏就地增量更新**）；需求 D 新增**「歌词」参数设置模块**（字号/行距/颜色/渐变/浮动/延迟等 11 项，即时生效并持久化）；需求 D 的歌词细线已移除、动效按 AMLL 模型重做（逐字柔边遮罩 + 未唱部分降亮 + 字号纵深 + 辉光）；**线上来源整体替换为国内可访问集合**（QQ 音乐 / 百度百科 / MusicBrainz，实测 4/4 命中，见 §6.3）
 - **第三轮（2026-10-06）已完成 P0–P3**：需求 A 卡顿**彻底解决**（P1：文件头测尺寸一次解码到位 + 两级字节预算缓存 402MB→88MB + 快照面复用池 + 空闲预取 + 单飞详情解码）；歌词动效**对齐 AMLL**（P2：逐字独立变换 `--g`、行进入/退出、接手过冲、间奏律动点、高亮行放大，全部可关可调）；「歌词」参数模块补全（P3：四组分类 + 每项/分组复位 + 三套预设 + JSON 导入导出 + 预览选歌选行与跟随播放，13→20 项）；**顺手修掉长期基线缺陷 `check-music-model`（白天玻璃雾面被检查态拉低）**。全部检查 **13/13 通过**
-- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.3/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现，已加入口哈希一致性断言）
+- **第三轮 P4（2026-10-06）已完成：数据源扩充**。`album-online.mjs` 新增 **网易云音乐**（`/api/search/get/web` 定 id → `/api/v1/album/{id}` 取长简介，繁转简，双重复核）与 **Discogs / Wikidata** best-effort 末位来源（各自独立 3s 预算 + 熔断，失败只空自己一行）；新增可达性自检 `check-music-online-sources.mjs` 并纳入 `check:music`；**覆盖率 39/79(49.4%) → 60/78(76.9%)，+27.5 个百分点，报错 0**（网易云贡献 19 张命中、其中 5 张提供 QQ 缺失的长简介；Discogs 兜底 1 张）。详见 §6.3
+- **已产出本地可安装包**：`releases/rhine-music-local-mod/v0.3.0-local.4/`（双击 `RhineMusic.exe` 即可，无需浏览器；打包脚本 `scripts/package-windows.mjs` 可复现，已加入口哈希一致性断言）
 
 > ⚠️ **包的关系（2026-10-06 核实，此前一度说错，以此为准）**：
 >
@@ -349,27 +350,32 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 
 **未做（已量化后主动放弃）**：`scene.ts` 每帧约 432 个 `visibleCell` 对象 + 432 个模板字符串 + 1 个 `Set`，`music-camera.ts` 每帧约 12–20 个 `Vector3`。按 V8 新生代分配成本折算约 10 µs/帧量级，比一次 21 MB 纹理上传或一次强制布局低两个数量级，因此排在最后且本轮未动 —— 它是真实存在的开销，但不是本次"卡顿"的主因。
 
-## 6.3 线上来源的实测结论（第二轮：整体换成国内可访问集合）
+## 6.3 线上来源的实测结论（第三轮 P4：新增网易云音乐 + Discogs/Wikidata 末位）
 
-| 来源 | 主机 | 覆盖率（真实 79 张） | 备注 |
+| 来源 | 主机 | 覆盖率（真实 78 张可匹配） | 备注 |
 |---|---|---|---|
-| QQ 音乐 | `c.y.qq.com` | **38/79（48.1%）** | 唯一提供**长中文简介**的来源（叶惠美 2568 字、丝路 8000+ 字）；免密钥；先 `smartbox_new.fcg` 取 mid，再 `fcg_v8_album_info_cp.fcg` 取详情 |
-| 百度百科 | `baike.baidu.com` | **33/79（41.8%）** | 只用官方开放 API `BaikeLemmaCardApi`（appid 379020）；**词条页即使带完整浏览器头也返回 403 + 验证码**，页面通道不可用 |
-| MusicBrainz | `musicbrainz.org` | 39/79 | 发行类型/首次发行/艺人一致度，CC0 |
-| Apple Music 商店 | `itunes.apple.com` | 1/39 | **降级为二阶段**：只有当国内三源**全部返回"没找到"**才发起；命中或报错都不再花费请求 |
-| 网易云 / 咪咕 / 酷狗 / 必应 / 百度搜索 | — | 0 | 均已实测后**主动排除**（分别是 `code:-462` 限流、只回 HTML 壳无数据、两主机 404、通用 SERP 非元数据 API、1.1 MB 结果页含反爬标记） |
-| 维基百科 / Wikidata | — | 0 | `zh.wikipedia.org` 每次 9.0s 中止（DNS 污染），79 张贡献 0，已**整体删除**该通道 |
+| QQ 音乐 | `c.y.qq.com` | **48/78（61.5%）** | 长中文简介主力（叶惠美 2568 字、丝路 8000+ 字）；先 `smartbox_new.fcg` 取 mid，再 `fcg_v8_album_info_cp.fcg` 取详情 |
+| MusicBrainz | `musicbrainz.org` | 35/78（44.9%） | 发行类型/首次发行/艺人一致度，CC0 |
+| 百度百科 | `baike.baidu.com` | 25/78（32.1%） | 只用官方开放 API `BaikeLemmaCardApi`（appid 379020）；词条页返回 403，页面通道不可用 |
+| **网易云音乐** | `music.163.com` | **19/78（24.4%）** | **P4 新增**：`/api/search/get/web` 定 id → `/api/v1/album/{id}` 取 `description` 长简介（繁转简）+ `publishTime` + `company` + `size`。⚠️ **非 v1 的 `/api/album/{id}` 被风控返回 `code:-462`，只有 v1 路径免登录可答**；双重复核（搜索名 + 详情名）防错答 |
+| **Discogs** | `api.discogs.com` | 1/78（1.3%） | **P4 新增 best-effort 末位**：年份/流派/载体 facts（无长简介）。搜索**不能带 `artist` 参数**（Discogs 用拉丁化名匹配，中文歌手名返回 0 行），只搜 `release_title` 再按 "Artist - Title" 拆行匹配 |
+| Apple Music 商店 | `itunes.apple.com` | 末位 | 二阶段：国内主来源全部"没找到"才发起 |
+| **Wikidata** | `www.wikidata.org` | 0/78 | **P4 新增 best-effort 末位**：仅发行日期 P577 一个 fact。本机**极不稳定**（时 4–5s 成功、时 8–10s 超时），故独立 3s 预算 + 熔断 30 分钟，失败只空自己那一行；中文专辑 label 常为英文（"Fantasy"），需 `wbgetentities` 取 alias 再匹配 |
+
+**总命中率：60/78 = 76.9%（上轮 39/79 = 49.4%，+27.5 个百分点），报错 0。** 长简介来源：QQ 音乐 48 张、网易云音乐 5 张、百度百科 2 张。网易云的价值是**补 QQ 没覆盖的那批专辑**（19 张命中里 5 张提供了 QQ 缺失的长简介）。
 
 **两条必须记住的错答防护**（两个来源对歧义词条都会自信地返回错东西，都靠"复核"而不是"换查询词"）：
 
-- **QQ 音乐**：建议接口按热度排序，返回的 mid 可能属于别的专辑 → 取详情后**再用详情自己的 `name` 复核一次**专辑名；不符即 `empty` 并说明"详情返回的是《X》"。`X 专辑` / `X（专辑）` / `X + 歌手` 这类消歧后缀在百度百科上**试过且无效**（后缀在查询前被归一化掉）。
+- **QQ 音乐 / 网易云音乐**：建议/搜索接口按热度排序，返回的 mid/id 可能属于别的专辑 → 取详情后**再用详情自己的 `name` 复核一次**专辑名；不符即 `empty` 并说明"详情返回的是《X》"。网易云与 QQ 共用同一套复核逻辑。
 - **百度百科**：一个关键词只解析到一个词条，「叶惠美」回的是那位母亲，「丝路」回的是丝绸之路 → 摘要须同时满足三段式校验：含 `《专辑名》`、含 `发行/收录/推出`、含歌手名之一，否则 `empty` 并回显被拒摘要的前 36 字。
 
 **标题清洗**（`titleVariants()`，实测收益最大的一处）：本地标题带包装（`燕尾蝶<下定爱的决心>`、`我好吗? - Single`、`爱的大游行Live全记录 (Live)`），清洗后**恢复了「燕尾蝶」(4569 字) 与「15 Khalil Fong Live in Hong Kong 2011」**，两者原始标题都落空；上限 2 个变体，避免一次查询发散。
 
-**语句槽位**（`STATEMENT_SLOTS`）：QQ 的 `aDate` 与 MusicBrainz 的 `first-release-date` 说的是同一件事，原先会拼成"…发行于 D…首次发行于 D"把同一个日期说两遍；现在陈述句带 `slot`，装配时**每个槽位取第一条**。字段级明细一条不丢（`facts` 不去重），真正的分歧仍由「年份差异」暴露。实测：叶惠美两个来源同为 2003-07-31 → 正文只说一次；范特西两源不一致（09-14 / 09-20）→ 正文取 QQ 的，两条日期在 facts 里并存。
+**语句槽位**（`STATEMENT_SLOTS`）：QQ 的 `aDate`、网易云的 `publishTime` 与 MusicBrainz 的 `first-release-date` 说的是同一件事，原先会拼成"…发行于 D…首次发行于 D"把同一个日期说两遍；现在陈述句带 `slot`，装配时**每个槽位取第一条**。字段级明细一条不丢（`facts` 不去重），真正的分歧仍由「年份差异」暴露。实测：叶惠美两个来源同为 2003-07-31 → 正文只说一次；范特西两源不一致（09-14 / 09-13）→ 正文取 QQ 的，两条日期在 facts 里并存。
 
-**第二轮线上实测（4 张代表作，走真实网络与真实代码路径）**：4/4 命中，763–1028 ms/张，`providers` 行分别为 `qq:ok baike:ok musicbrainz:ok`（叶惠美、范特西）、`qq:ok baike:empty musicbrainz:empty`（燕尾蝶）、`qq:ok baike:empty musicbrainz:ok`（丝路）；Apple Music **全程未被请求**，证明二阶段门控生效；出处只列真正贡献内容的来源（燕尾蝶只列 `QQ 音乐`）。复现脚本：`playground/rhine-source-probe/smoke.mjs`。
+**末位门控（第三轮）**：网易云与 QQ/百度/MusicBrainz 同处**第一阶段**（并发）；Apple Music / Discogs / Wikidata 是**第二阶段**，仅当四源全部 `empty` 才并发发起。单源失败（如 Wikidata 超时）只空自己那一行、并熔断 30 分钟，不影响整体，也不拖慢正常命中的专辑。
+
+**第二轮线上实测（4 张代表作）**：4/4 命中，763–1028 ms/张，Apple Music 全程未被请求，证明门控生效。第三轮新增网易云后，范特西/叶惠美四主源全 `ok`，网易云发行日期与 QQ 并存于 facts（09-13 vs 09-14 的差异如实暴露）。复现脚本：`playground/rhine-perf/smoke-p4.mjs`、`coverage-p4.mjs`、`check-music-online-sources.mjs`（可达性自检，已纳入 `check:music`）。
 
 ## 7. 变更记录
 
@@ -400,3 +406,4 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 2026-10-06 | **第三轮 P2（歌词动效对齐 AMLL）**：`music-lyrics.ts` 新增 `splitUnits`（汉字逐字/拉丁按词/空白成单元）+ `unitReveal`（逐字进度，单调不回退）；`music-lyrics-pane.ts` 唱行惰性拆分为逐字单元（`--g` 每帧只写变化的单元）、行进入/退出（`--ly-enter` 四级）、间奏律动点（`setInterlude` 类切换，纯 CSS 呼吸）；`music-lyrics-switch.css` 逐字上浮/呼吸、`lyric-settle` 过冲、高亮行放大 `--ly-active-scale`、`.lyric-units` 包裹层（修 `.lyric-fill` 是 flex 会把单元变 flex-item 不换行的坑）；`check-music-lyrics` 补 `splitUnits`/`unitReveal` 断言与 `--g` 契约 | 用户要求"以画面为重、性能可舍"，逐字层从一行一个裁剪百分比升级为逐字独立变换；每个新增动效都必须可关可调 |
 | 2026-10-06 | **第三轮 P3（歌词参数模块补全）**：`lyrics-settings.ts` 参数 13→20 项、四组分类（字号版式/颜色高亮/动效/时间）、每项复位 + 分组复位、三套预设（克制/Apple Music/AMLL）、JSON 导入导出（`applyLyricPatch` 统一钳位）、预览可选歌选行 + 跟随播放（`lyricPreviewMarkup`/`setLyricPreviewSample`）；`music-app.ts` 接线（`previewTracks`/`previewDocument`/`syncPreviewFollow` 等 + 新动作分发）；`check-music-lyrics` 补 P3 接线断言 | 用户要求参数模块"专门的模块"且"每项可关可调"，预览要与真实面板同源防漂移 |
 | 2026-10-06 | **第三轮 P0（打包）+ 收尾**：`vite build` 106 模块落入 `playground/rhine-build-p3`，`robocopy /MIR` 回灌 `app/dist`（175 文件、入口 `index-B7tTgcKt.js`、MD5 一致）；`scripts/package-windows.mjs` 默认输出改 `.3`、新增**入口哈希一致性断言**（包内 `index.html` 引用的入口必须存在于 `assets/`）；产出 `releases/rhine-music-local-mod/v0.3.0-local.3/`（515MB，全部 MD5 一致）；新增 `docs/发布说明-v0.3.0-local.3.md` | 修好 `check-music-model` 基线缺陷后打包，让用户能双击看到 P0–P3 效果；入口断言防"包存在≠包新"再犯 |
+| 2026-10-06 | **第三轮 P4（数据源扩充）**：`album-online.mjs` 新增 `netease()`（`/api/search/get/web` 定 id → `/api/v1/album/{id}` 取 `description` 长简介，`opencc-js` 繁转简 + 空白压缩，`publishTime`→`millisToDate`，双重复核防错答）与 `discogs()`（年份/流派/载体，**不带 artist 参数**——Discogs 用拉丁化名匹配中文歌手名返回 0 行，按 "Artist - Title" 拆行匹配）、`wikidata()`（P577 发行日期，`wbsearchentities`+`wbgetentities` 用 alias 匹配中文 label，独立 3s 预算）；`resolve()` 第一阶段加 netease、第二阶段（末位）加 discogs/wikidata；`request()` 支持 per-call 超时；新增 `check-music-online-sources.mjs` 可达性自检（Node fetch 逐主机报 status/耗时/JSON）并纳入 `check:music`；`check-music-online.mjs` 补 netease/discogs/wikidata 的命中/错答拒绝/繁转简/末位门控断言；`music-app.ts`/`music-archive.ts` 来源文案加网易云。**覆盖率 39/79(49.4%) → 60/78(76.9%)，+27.5pp，报错 0**（netease 19 张、discogs 1 张） | 用户明确要求"把 P4 也做了，专辑背景知识用爬虫爬取"；网易云 v1 接口免登录可答且提供 QQ 缺失的长简介（19 张命中里 5 张是 QQ 没覆盖的），Discogs/Wikidata 按计划作 best-effort 末位、失败不影响整体 |

@@ -31,13 +31,13 @@ const APP = path.join(REPO, 'app')
 
 /** The third-party build this modification sits on top of. Treated as read-only. */
 const DEFAULT_BASE = 'C:/Users/徐梓烽/Downloads/Rhine-Music-Windows-0.3.0-二次修改'
-const DEFAULT_OUT = 'C:/AI Document/releases/rhine-music-local-mod/v0.3.0-local.3'
+const DEFAULT_OUT = 'C:/AI Document/releases/rhine-music-local-mod/v0.3.0-local.4'
 /** Files the launcher loads from its own directory. */
 const SHELL_FILES = ['RhineMusic.exe', 'libmpv-2.dll', 'app.ico', 'no-log.flag', 'LICENSE', 'NOTICE.md', 'README-Windows.md']
 /** Reference docs copied from the repo into the package root. */
 const DOCS = {
   '使用说明-本地修改版.md': path.join(REPO, 'docs/使用说明-本地修改版.md'),
-  '发布说明.md': path.join(REPO, 'docs/发布说明-v0.3.0-local.3.md'),
+  '发布说明.md': path.join(REPO, 'docs/发布说明-v0.3.0-local.4.md'),
 }
 
 function arg(name, fallback) {

@@ -27,7 +27,11 @@
 
 import path from 'node:path'
 import { promises as fs } from 'node:fs'
+import OpenCC from 'opencc-js'
 import { normalizeName } from './album-introductions.mjs'
+
+/** 网易云专辑简介多为繁体；繁转简与既有介绍管线保持一致，简体输入幂等。 */
+const toSimplified = OpenCC.Converter({ from: 'tw', to: 'cn' })
 
 export const ONLINE_TTL_MS = 30 * 86400_000
 export const MAX_BLOCK_BYTES = 4000
@@ -45,22 +49,35 @@ const ISO = () => new Date().toISOString()
  * Verified reachable from a mainland China residential line on 2026-10-06, with
  * an album-worthy payload, and no key or account:
  *   musicbrainz.org  MusicBrainz (49.4% of the author's library)
- *   c.y.qq.com       QQ 音乐   (48.1%, and the only source with long Chinese prose)
+ *   c.y.qq.com       QQ 音乐   (48.1%, long Chinese prose)
  *   baike.baidu.com  百度百科   (41.8%, best on canonical albums; the open API
  *                               works even though the item pages return 403)
+ *   music.163.com    网易云音乐 (long Chinese prose; `/api/search/get/web` +
+ *                               `/api/v1/album/{id}`. ⚠️ the non-v1
+ *                               `/api/album/{id}` is 风控-ed with code:-462,
+ *                               only the v1 path answers without a login)
+ *   api.discogs.com  Discogs    (year/genre/format facts; polite interval only)
  *   itunes.apple.com Apple Music 商店 (Western catalogues only; see itunes())
  *
- * Deliberately absent: zh.wikipedia.org / www.wikidata.org. Wikipedia timed out
- * on every attempt (DNS interception) and contributed 0 of 79 albums while
- * costing one timeout per pass; the user's brief was explicit that sources
- * unusable in China must not be wired in. The item pages of baike return 403 for
- * non-browser clients — only the documented open API is used.
+ * Best-effort tail (own short deadline + breaker; a failure only blanks its own
+ * row): `www.wikidata.org`. It timed out repeatedly on this machine, so it is
+ * gated behind the same "all primary sources empty" sweep as the store and given
+ * a short budget so it never stretches an album view.
+ *
+ * Deliberately absent: zh.wikipedia.org. It timed out on every attempt (DNS
+ * interception) and contributed 0 of 79 albums while costing one timeout per
+ * pass; the user's brief was explicit that sources unusable in China must not
+ * be wired in. The item pages of baike return 403 for non-browser clients —
+ * only the documented open API is used.
  */
 export const PROVIDER_HOSTS = {
   qq: 'c.y.qq.com',
   baike: 'baike.baidu.com',
   musicbrainz: 'musicbrainz.org',
+  netease: 'music.163.com',
+  discogs: 'api.discogs.com',
   itunes: 'itunes.apple.com',
+  wikidata: 'www.wikidata.org',
 }
 
 /** The public suggestion endpoint: returns an album mid plus the performer. */
@@ -71,6 +88,14 @@ const QQ_ALBUM = 'https://c.y.qq.com/v8/fcg-bin/fcg_v8_album_info_cp.fcg'
 const BAIKE_API = 'https://baike.baidu.com/api/openapi/BaikeLemmaCardApi'
 /** Public appid used by Baike's own embeddable lemma card. */
 const BAIKE_APPID = '379020'
+/** 网易云搜索（type=10 专辑），返回 id + name + artist。 */
+const NETEASE_SEARCH = 'https://music.163.com/api/search/get/web'
+/** 网易云专辑详情 v1：description（长简介）、publishTime、company、size。 */
+const NETEASE_ALBUM = 'https://music.163.com/api/v1/album'
+/** Discogs 发行搜索，无需 key，但需礼貌间隔与 User-Agent。 */
+const DISCOGS_SEARCH = 'https://api.discogs.com/database/search'
+/** Wikidata 实体搜索（返回 Q 号，无消歧柄，需严格复核）。 */
+const WIKIDATA_SEARCH = 'https://www.wikidata.org/w/api.php'
 
 const firstString = (value) => (typeof value === 'string' && value.trim() ? value.trim() : '')
 
@@ -127,6 +152,13 @@ function humanDate(value) {
   if (!month) return `${year} 年`
   if (!day || day === '00') return `${year} 年 ${Number(month)} 月`
   return `${year} 年 ${Number(month)} 月 ${Number(day)} 日`
+}
+
+/** 1000396800000 -> 2001-09-13（网易云 publishTime 是毫秒时间戳）。 */
+function millisToDate(value) {
+  const millis = Number(value)
+  if (!Number.isFinite(millis) || millis <= 0) return ''
+  return new Date(millis).toISOString().slice(0, 10)
 }
 
 /**
@@ -225,7 +257,10 @@ export class AlbumOnlineResolver {
       qq: new Gate(intervalMs),
       baike: new Gate(intervalMs),
       musicbrainz: new Gate(intervalMs),
+      netease: new Gate(intervalMs),
+      discogs: new Gate(intervalMs),
       itunes: new Gate(intervalMs),
+      wikidata: new Gate(intervalMs),
     }
     this.memory = new Map()
     this.breaker = new Map()
@@ -306,7 +341,7 @@ export class AlbumOnlineResolver {
     }
   }
 
-  async request(url, gateId) {
+  async request(url, gateId, timeoutMs = this.requestTimeoutMs) {
     return this.gates[gateId].run(async () => {
       // MusicBrainz documents 503 (and 429) as "you are being rate limited,
       // back off and retry", and a library-wide pass is exactly the workload
@@ -320,7 +355,7 @@ export class AlbumOnlineResolver {
               Accept: 'application/json',
               'User-Agent': this.contact ? `${APP_UA} (${this.contact})` : APP_UA,
             },
-            signal: AbortSignal.timeout(this.requestTimeoutMs),
+            signal: AbortSignal.timeout(timeoutMs),
             redirect: 'error',
           })
         } catch (error) {
@@ -618,6 +653,207 @@ export class AlbumOnlineResolver {
   }
 
   /**
+   * 网易云音乐. Two calls: `/api/search/get/web` gives the album id, then
+   * `/api/v1/album/{id}` gives a long Chinese 简介 plus the release date, the
+   * label and the track count. The id comes from a search result, so the match
+   * is verified twice — title and performer in the search, and the detail's own
+   * `name` again — exactly like the QQ 音乐 guard. The non-v1 `/api/album/{id}`
+   * endpoint is 风控-ed (code:-462); only the v1 path answers without a login.
+   */
+  async netease(album) {
+    const wantedArtist = creditTokens(album.artist)
+    for (const variant of titleVariants(album.title)) {
+      const search = new URL(NETEASE_SEARCH)
+      search.search = new URLSearchParams({ s: `${variant} ${album.artist}`.trim(), type: '10', offset: '0', limit: '10' }).toString()
+      let list
+      try {
+        const data = await this.request(search, 'netease')
+        list = Array.isArray(data?.result?.albums) ? data.result.albums : []
+      } catch (error) {
+        if (variant === titleVariants(album.title)[0]) throw error
+        continue
+      }
+      const wanted = normalizeName(variant)
+      const best = list
+        .map((item) => {
+          const name = normalizeName(item?.name ?? '')
+          const singer = normalizeName(typeof item?.artist === 'string' ? item.artist : (item?.artist?.name ?? ''))
+          let score = 0
+          if (name && name === wanted) score += 5
+          else if (name && (name.includes(wanted) || wanted.includes(name))) score += 2
+          if (wantedArtist.some((token) => singer.includes(token))) score += 4
+          return { item, score }
+        })
+        .sort((a, b) => b.score - a.score)[0]
+      // Below 2 there is no agreement at all: the suggestion list is ranked by
+      // popularity, so an unguarded first row would happily return a hit album.
+      if (!best || best.score < 2 || !best.item?.id) continue
+
+      const detail = new URL(`${NETEASE_ALBUM}/${String(best.item.id)}`)
+      const data = await this.request(detail, 'netease')
+      const record = data?.album ?? data ?? {}
+      const got = normalizeName(record.name ?? '')
+      if (!got || !(got === wanted || got.includes(wanted) || wanted.includes(got)))
+        return { status: 'empty', detail: `详情返回的是《${firstString(record.name) || '未知'}》，与《${album.title}》不符` }
+
+      const facts = []
+      const statements = []
+      const date = millisToDate(record.publishTime)
+      if (date) {
+        facts.push({ label: '网易云发行日期', value: humanDate(date) })
+        statements.push({ slot: STATEMENT_SLOTS.release, text: `公开条目记录其发行于 ${humanDate(date)}` })
+      }
+      if (firstString(record.company)) {
+        const company = toSimplified(firstString(record.company))
+        facts.push({ label: '网易云唱片公司', value: company })
+        statements.push({ slot: STATEMENT_SLOTS.label, text: `由 ${company} 发行` })
+      }
+      const size = Number(record.size)
+      if (size > 0) facts.push({ label: '网易云收录曲目', value: `${size} 首` })
+
+      // 简介为繁体（偶含全角空格与换行），繁转简后压缩空白，与既有介绍管线一致。
+      const desc = firstString(record.description) || firstString(record.briefDesc)
+      if (!desc && !facts.length) return { status: 'empty', detail: '条目没有简介、发行日期或唱片公司' }
+      return {
+        status: 'ok',
+        ...(desc ? { prose: clip(toSimplified(desc).replace(/\s+/g, ' ').trim()) } : {}),
+        ...(facts.length ? { facts } : {}),
+        ...(statements.length ? { statements } : {}),
+        source: {
+          name: '网易云音乐',
+          url: `https://music.163.com/album?id=${encodeURIComponent(String(best.item.id))}`,
+          license: '内容版权归网易云音乐及原作者所有（以来源页为准）',
+          checkedAt: ISO(),
+        },
+      }
+    }
+    return { status: 'empty', detail: '网易云音乐未找到与本专辑名称、歌手相符的条目' }
+  }
+
+  /**
+   * Discogs. One search call, no key. It contributes year / genre / format
+   * facts only — no prose — so it is a best-effort tail that fills gaps the
+   * prose sources leave (an album no domestic source describes). Discogs titles
+   * read "Artist - Title", so both halves are matched independently.
+   */
+  async discogs(album) {
+    const url = new URL(DISCOGS_SEARCH)
+    // `artist` is deliberately omitted: Discogs matches it against the
+    // latinised credit ("Jay Chou"), so a Han artist name yields zero rows.
+    // The title alone is searched, and the performer is matched from the
+    // "Artist - Title" shape of each row instead.
+    url.search = new URLSearchParams({ release_title: album.title, type: 'release', per_page: '5' }).toString()
+    const data = await this.request(url, 'discogs')
+    const results = Array.isArray(data?.results) ? data.results : []
+    const wantedTitle = normalizeName(album.title)
+    const wantedArtist = normalizeName(album.artist)
+    const scored = results
+      .map((item) => {
+        const raw = firstString(item?.title)
+        const [credit = '', title = ''] = raw.split(/\s+-\s+/)
+        let score = 0
+        const titlePart = normalizeName(title)
+        const creditPart = normalizeName(credit)
+        if (titlePart && titlePart === wantedTitle) score += 5
+        else if (titlePart && (titlePart.includes(wantedTitle) || wantedTitle.includes(titlePart))) score += 2
+        if (wantedArtist && creditPart === wantedArtist) score += 4
+        else if (wantedArtist && creditPart && (creditPart.includes(wantedArtist) || wantedArtist.includes(creditPart))) score += 1
+        if (album.year && Number(item?.year) === Number(album.year)) score += 3
+        return { item, score }
+      })
+      .sort((a, b) => b.score - a.score)[0]
+    // Title and performer must both agree; a partial hit is not evidence.
+    if (!scored || scored.score < 8) return { status: 'empty', detail: scored ? '发行条目名称、歌手或年份未能可靠对上' : '未检索到发行条目' }
+
+    const item = scored.item
+    const facts = []
+    if (Number(item.year) > 0) facts.push({ label: 'Discogs 发行年份', value: `${item.year} 年` })
+    const genres = (Array.isArray(item.genre) ? item.genre : []).map(firstString).filter(Boolean)
+    if (genres.length) facts.push({ label: 'Discogs 流派', value: clip(genres.join(' / '), 160) })
+    const formats = (Array.isArray(item.format) ? item.format : []).map(firstString).filter(Boolean)
+    if (formats.length) facts.push({ label: 'Discogs 载体', value: clip(formats.join(' / '), 160) })
+    if (!facts.length) return { status: 'empty', detail: '发行条目没有年份、流派或载体' }
+    return {
+      status: 'ok',
+      facts,
+      source: {
+        name: 'Discogs',
+        url: `https://www.discogs.com/release/${encodeURIComponent(String(item.id))}`,
+        license: '数据以来源页为准（Discogs 数据库）',
+        checkedAt: ISO(),
+      },
+    }
+  }
+
+  /**
+   * Wikidata, best-effort. The most brittle of the tails — it times out often
+   * on this machine — so it gets a short per-request budget and contributes a
+   * single structured fact: the release date (P577). The entity is vetted the
+   * same way 百度百科 is: the label must name the album, and either the
+   * performer must be named or the description must read as an album/single.
+   */
+  async wikidata(album) {
+    const title = firstString(album.title)
+    if (!title) return { status: 'empty', detail: '专辑名称为空' }
+    const search = new URL(WIKIDATA_SEARCH)
+    search.search = new URLSearchParams({ action: 'wbsearchentities', search: title, language: 'zh', format: 'json', limit: '5', type: 'item' }).toString()
+    const data = await this.request(search, 'wikidata', 3000)
+    const hits = Array.isArray(data?.search) ? data.search : []
+    if (!hits.length) return { status: 'empty', detail: '未检索到候选实体' }
+
+    // The search label is often the English lemma ("Fantasy") even for a Han
+    // title, so the Chinese name only matches an alias. Fetch all candidates in
+    // one call and match against labels *and* aliases.
+    const ids = hits.map((hit) => hit.id).filter((id) => /^Q\d+$/.test(id)).slice(0, 5)
+    if (!ids.length) return { status: 'empty', detail: '候选实体无有效编号' }
+    const entityUrl = new URL(WIKIDATA_SEARCH)
+    entityUrl.search = new URLSearchParams({ action: 'wbgetentities', format: 'json', ids: ids.join('|'), props: 'labels|aliases|claims', languages: 'zh|zh-hans|zh-cn|en', languagefallback: '1' }).toString()
+    const entitiesData = await this.request(entityUrl, 'wikidata', 3000)
+    const entities = entitiesData?.entities ?? {}
+    const wanted = normalizeName(title)
+    const tokens = creditTokens(album.artist)
+    let chosen
+    for (const hit of hits) {
+      const entity = entities[hit.id]
+      if (!entity) continue
+      const names = [
+        entity.labels?.zh?.value,
+        entity.labels?.['zh-hans']?.value,
+        entity.labels?.en?.value,
+        ...Object.values(entity.aliases ?? {}).flatMap((list) => (list ?? []).map((alias) => alias.value)),
+      ]
+        .filter(Boolean)
+        .map(normalizeName)
+      const namesTitle = names.some((name) => name === wanted || name.includes(wanted) || wanted.includes(name))
+      if (!namesTitle) continue
+      const description = hit.description ?? ''
+      const descriptionNorm = normalizeName(description)
+      const mentionsArtist = tokens.some((token) => descriptionNorm.includes(token) || names.some((name) => name.includes(token)))
+      const isAlbumType = /专辑|專輯|唱片|录音室|錄音室|\balbum\b|\bep\b|单曲|單曲/i.test(description)
+      if (mentionsArtist || isAlbumType) {
+        chosen = { hit, entity }
+        break
+      }
+    }
+    if (!chosen) return { status: 'empty', detail: '未找到名称、类型或歌手相符的实体' }
+
+    const time = (chosen.entity.claims?.P577 ?? []).find((item) => item.rank !== 'deprecated')?.mainsnak?.datavalue?.value?.time
+    const date = typeof time === 'string' ? time.replace(/^\+/, '').slice(0, 10) : ''
+    if (!date) return { status: 'empty', detail: '实体没有发行日期声明' }
+    return {
+      status: 'ok',
+      facts: [{ label: 'Wikidata 发行日期', value: humanDate(date) }],
+      statements: [{ slot: STATEMENT_SLOTS.release, text: `公开条目记录其发行于 ${humanDate(date)}` }],
+      source: {
+        name: 'Wikidata',
+        url: `https://www.wikidata.org/wiki/${encodeURIComponent(chosen.hit.id)}`,
+        license: 'CC0（以来源页为准）',
+        checkedAt: ISO(),
+      },
+    }
+  }
+
+  /**
    * Resolves the supplement. Never throws: provider failures come back as
    * reported statuses so the panel can always say something true.
    */
@@ -661,18 +897,26 @@ export class AlbumOnlineResolver {
       ['qq', 'QQ 音乐', () => this.qq(album)],
       ['baike', '百度百科', () => this.baike(album)],
       ['musicbrainz', 'MusicBrainz', () => this.musicbrainz(album)],
+      ['netease', '网易云音乐', () => this.netease(album)],
     ]
     const settled = await Promise.all(
       plan.map(([id, label, task]) => run(id, label, task)),
     )
-    // Apple Music is held back to a second phase. Measured on this library it
-    // contributed 1 of 39 hits while its Chinese search returns unrelated rows
-    // (searching 《范特西》 returned 2CELLOS and a piano compilation), so it stays
-    // available for Western catalogues without spending a request on every album.
-    // Only a clean sweep of "all three ran and found nothing" triggers it: a
-    // failed or skipped provider means the network is the problem, not coverage.
+    // The tail (Apple Music 商店 + Discogs + Wikidata) is held back to a second
+    // phase. Measured on this library the store contributed 1 of 39 hits while
+    // its Chinese search returns unrelated rows, and Discogs / Wikidata carry
+    // facts rather than prose, so they stay available without spending a request
+    // on every album. Only a clean sweep of "all four primary sources ran and
+    // found nothing" triggers them: a failed or skipped provider means the
+    // network is the problem, not coverage.
     if (settled.every((entry) => entry.status === 'empty'))
-      settled.push(await run('itunes', 'Apple Music 商店', () => this.itunes(album)))
+      settled.push(
+        ...(await Promise.all([
+          run('itunes', 'Apple Music 商店', () => this.itunes(album)),
+          run('discogs', 'Discogs', () => this.discogs(album)),
+          run('wikidata', 'Wikidata', () => this.wikidata(album)),
+        ])),
+      )
 
     // Assembled in `plan` order, not in completion order: providers answer in
     // whatever order the network gives, but the same album must not read back as
