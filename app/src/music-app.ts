@@ -24,7 +24,7 @@ import {
   orderMusicAlbums,
   type MusicSortMode,
 } from "./data";
-import { wrap, type ArchiveNavigation } from "./archive-loop";
+import { fileAtCell, wrap, type ArchiveNavigation } from "./archive-loop";
 import {
   normalizeQuality,
   qualityPresets,
@@ -143,7 +143,6 @@ const preferences = {
     quality: "original" as QualityPreset,
     reduced: false,
     volume: 0.65,
-    songFade: true,
     // 留空直到读取旧偏好：默认值会盖掉用户此前的"关闭淡入淡出"选择。
     songTransition: undefined as SongTransitionMode | undefined,
     bgm: true,
@@ -234,6 +233,7 @@ preferences.motionDebug = preferences.motionDebug === true;
 preferences.motionSpeed = normalizeMusicMotionSpeed(preferences.motionSpeed);
 setMusicMotionSpeed(preferences.motionSpeed);
 preferences.songTransition = normalizeSongTransition(preferences.songTransition, preferences.songFade);
+delete preferences.songFade;
 const syncMotionScale = () => document.documentElement.style.setProperty("--music-motion-scale", String(1 / getMusicMotionSpeed()));
 syncMotionScale();
 onMusicMotionSpeedChange(syncMotionScale);
@@ -304,7 +304,6 @@ let columnMemory = new Map<string, string>();
 let playerState: MusicPlayerState;
 const player = new MusicPlayer({
   volume: preferences.volume,
-  songFadeEnabled: preferences.songFade,
   songTransitionMode: preferences.songTransition,
   bgmEnabled: preferences.bgm,
   bgmVolume: preferences.bgmVolume,
@@ -852,6 +851,7 @@ boot = new MusicBoot(stage, {
   },
 });
 function showBrowseSurface() {
+  syncAlbumNavigation();
   if (!albums.length || boot?.active) return;
   if (overview) { $("#music-browse").inert = true; return; }
   browseTransition.show(preferences.reduced);
@@ -1132,7 +1132,7 @@ function updateSelection(navigation?: ArchiveNavigation) {
 }
 function commitSelection(index: number, navigation?: ArchiveNavigation, keepDetail = false) {
   selected = wrap(index, records.length);
-  columnMemory.set(
+  if (preferences.rememberColumnPosition) columnMemory.set(
     archiveColumns[fileLocation(selected).lane],
     records[selected].id,
   );
@@ -1167,27 +1167,60 @@ function navigationSelection() {
   if (libraryRebuilding && libraryIntent && "index" in libraryIntent) return libraryIntent.index;
   return presentation.pendingSelection?.index ?? selected;
 }
+/** Pending detail/return requests already define the next input boundary. */
+function syncAlbumNavigation() {
+  const cursor = navigationSelection();
+  const files = records.length ? columnFiles(fileLocation(cursor).lane) : [];
+  const ordinal = files.indexOf(cursor);
+  const bounded = preferences.arrayMode === "realistic";
+  for (const button of stage.querySelectorAll<HTMLButtonElement>('[data-action="prev"], [data-action="next"]')) {
+    button.disabled = !files.length || (bounded && (button.dataset.action === "prev"
+      ? ordinal <= 0 : ordinal >= files.length - 1));
+  }
+}
 function stepAlbum(direction: number) {
   if (!records.length) return;
   const cursor = navigationSelection();
   const files = columnFiles(fileLocation(cursor).lane);
-  if (files.length > 1)
-    select(files[wrap(files.indexOf(cursor) + direction, files.length)], {
-      axis: "row",
-      direction,
-    });
+  if (files.length < 2) return;
+  const ordinal = files.indexOf(cursor);
+  const target = preferences.arrayMode === "realistic"
+    ? Math.max(0, Math.min(files.length - 1, ordinal + direction))
+    : wrap(ordinal + direction, files.length);
+  const delta = preferences.arrayMode === "realistic" ? target - ordinal : direction;
+  // A boundary input must not restart a detail handoff or cancel track focus.
+  if (!delta) return;
+  select(files[target], { axis: "row", direction: delta });
+}
+/** Column arrows and overview entry obey one browsing-position preference. */
+function resolveColumnSelection(lane: number): { index: number; row?: number } {
+  const files = columnFiles(lane);
+  if (!files.length) return { index: -1 };
+  if (preferences.rememberColumnPosition) {
+    const remembered = columnMemory.get(archiveColumns[lane]);
+    const index = files.find((index) => records[index]?.id === remembered);
+    return { index: index ?? files[0] };
+  }
+  // The rendered rail can still be between targets after rapid input. Sample
+  // its actual depth, then preserve that physical occurrence in filled arrays.
+  const depth = Math.round(scene?.musicBrowseRowForColumn(lane) ??
+    scene?.musicBrowseRow ?? fileLocation(navigationSelection()).row);
+  const row = preferences.arrayMode === "realistic"
+    ? Math.max(12, Math.min(11 + files.length, depth)) : depth;
+  return { index: fileAtCell({ lane, row }), row };
 }
 function stepGenre(direction: number) {
+  overviewUI.collapse();
   if (!records.length || archiveColumns.length < 2) return;
   const lane = wrap(
     fileLocation(navigationSelection()).lane + direction,
     archiveColumns.length,
   );
-  const remembered = columnMemory.get(archiveColumns[lane]);
-  const index = records.findIndex((r) => r.id === remembered);
-  select(index >= 0 ? index : columnFiles(lane)[0], {
+  const target = resolveColumnSelection(lane);
+  select(target.index, {
     axis: "lane",
     direction,
+    row: target.row,
   });
 }
 function setMode(next: "archive" | "detail") {
@@ -1908,7 +1941,7 @@ function renderSettingsPanel() {
     <section class="panel-section" id="introduction-settings"><h3>专辑介绍</h3><p>从公开百科查询并更新专辑介绍，附上资料来源。介绍保存在本机，不需要配置 MusicBrainz 联系信息；音乐文件不会上传。</p><p id="introduction-coverage"></p><button class="primary-button" id="introduction-refresh" data-action="introductions-library">查询 / 更新专辑介绍 ↗</button><progress id="introduction-progress" aria-label="专辑介绍查询进度" max="1" value="0" hidden></progress><p id="introduction-status" class="scan-status" role="status" aria-live="polite"></p><details id="introduction-missing" hidden><summary></summary><ul></ul></details></section>
     ${qualityMarkup(renderQuality)}
     <section class="panel-section"><h3>动效与显示</h3><label class="settings-row"><span>减少动态效果<small>简化镜头、文字加载和页签过渡</small></span><input type="checkbox" id="reduced-motion" ${preferences.reduced ? "checked" : ""}></label><label class="settings-row"><span>空闲时停止绘制<small>2 分钟无操作后暂停三维渲染，移动鼠标或按键立即恢复；省电与降低风扇转速</small></span><input type="checkbox" id="idle-stop" ${preferences.idleStop ? "checked" : ""}></label><label class="settings-row"><span>玻璃雾度<small>100% 为原始质感；调高更朦胧，调低更通透。只影响玻璃外壳</small></span><span class="settings-slider"><input type="range" id="glass-frost" aria-label="玻璃雾度" min="0" max="200" step="5" value="${preferences.glassFrost}"><output id="glass-frost-output">${preferences.glassFrost}%</output></span></label><label class="settings-row"><span>锐化强度<small>0% 关闭。三维画面按较低分辨率渲染再放大，锐化找回局部对比；只作用于三维场景</small></span><span class="settings-slider"><input type="range" id="sharpen" aria-label="锐化强度" min="0" max="100" step="5" value="${preferences.sharpen}"><output id="sharpen-output">${preferences.sharpen}%</output></span></label><button class="text-button" data-action="fullscreen">切换全屏 ↗</button></section>
-    <section class="panel-section"><h3>声音</h3><label class="settings-row"><span>歌曲音量</span><input type="range" id="volume" aria-label="歌曲音量" min="0" max="100" value="${Math.round(preferences.volume * 100)}"></label><label class="settings-row"><span>歌曲衔接<small>选择切换歌曲时的音量过渡</small></span><select id="song-transition-setting" aria-label="歌曲衔接方式"><option value="fade-out" ${preferences.songTransition === "fade-out" ? "selected" : ""}>淡出但不淡入</option><option value="fade-in-out" ${preferences.songTransition === "fade-in-out" ? "selected" : ""}>淡出淡入</option><option value="gapless" ${preferences.songTransition === "gapless" ? "selected" : ""}>无缝播放</option></select></label><label class="settings-row"><span>界面音效<small>玻璃卡片与终端操作</small></span><input type="checkbox" id="sound-setting" ${preferences.sound ? "checked" : ""}></label><label class="settings-row"><span>音效音量</span><input type="range" id="sound-volume" aria-label="音效音量" min="0" max="100" value="${Math.round(preferences.soundVolume * 100)}"></label><label class="settings-row"><span>氛围 BGM<small>专辑开始前淡出，停止后淡入</small></span><input type="checkbox" id="bgm-setting" ${preferences.bgm ? "checked" : ""}></label><label class="settings-row"><span>BGM 音量</span><input type="range" id="bgm-volume" aria-label="BGM 音量" min="0" max="100" value="${Math.round(preferences.bgmVolume * 100)}"></label><button class="text-button" data-action="sound-preview">试听界面音效 ↗</button></section>
+    <section class="panel-section"><h3>声音</h3><label class="settings-row"><span>歌曲音量</span><input type="range" id="volume" aria-label="歌曲音量" min="0" max="100" value="${Math.round(preferences.volume * 100)}"></label><label class="settings-row"><span>歌曲衔接<small>选择切换歌曲时的音量过渡</small></span><select id="song-fade-setting" aria-label="歌曲衔接方式"><option value="fade-out" ${preferences.songTransition === "fade-out" ? "selected" : ""}>淡出但不淡入</option><option value="fade-in-out" ${preferences.songTransition === "fade-in-out" ? "selected" : ""}>淡出淡入</option><option value="gapless" ${preferences.songTransition === "gapless" ? "selected" : ""}>无缝播放</option></select></label><label class="settings-row"><span>界面音效<small>玻璃卡片与终端操作</small></span><input type="checkbox" id="sound-setting" ${preferences.sound ? "checked" : ""}></label><label class="settings-row"><span>音效音量</span><input type="range" id="sound-volume" aria-label="音效音量" min="0" max="100" value="${Math.round(preferences.soundVolume * 100)}"></label><label class="settings-row"><span>氛围 BGM<small>专辑开始前淡出，停止后淡入</small></span><input type="checkbox" id="bgm-setting" ${preferences.bgm ? "checked" : ""}></label><label class="settings-row"><span>BGM 音量</span><input type="range" id="bgm-volume" aria-label="BGM 音量" min="0" max="100" value="${Math.round(preferences.bgmVolume * 100)}"></label><button class="text-button" data-action="sound-preview">试听界面音效 ↗</button></section>
     ${lyricsMarkup(lyricSettings, previewTracks())}
     ${nativeKernelMarkup()}
     <section class="panel-section"><h3>开发与资源</h3><p>音乐适配与维护：<a href="https://github.com/RonaldDeng/Rhine-Music-Demo" target="_blank" rel="noopener">RonaldDeng ↗</a><br>原版界面：<a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener">LBEILC / RhineLabUI ↗</a></p><p><a href="/licenses/project-mit.txt" target="_blank" rel="noopener">代码 MIT 许可 ↗</a> · <a href="https://github.com/RonaldDeng/Rhine-Music-Demo/blob/v0.2.0/NOTICE.md" target="_blank" rel="noopener">版权与资源说明 ↗</a></p><a href="/?original=1&scene=archive" target="_blank" rel="noopener">打开原版档案界面 ↗</a><p><a href="/fonts/MiSans-license.pdf" target="_blank" rel="noopener">MiSans 字体许可 ↗</a></p></section>`;
@@ -2039,6 +2072,24 @@ document.addEventListener("click", (e) => {
     "button, [data-action]",
   );
   if (!target) return;
+  if (target.dataset.overviewLane !== undefined) {
+    overviewUI.expand(Number(target.dataset.overviewLane));
+    return;
+  }
+  if (target.dataset.overviewEnterLane !== undefined) {
+    const lane = Number(target.dataset.overviewEnterLane);
+    if (!overviewUI.canEnter(lane)) return;
+    const targetColumn = resolveColumnSelection(lane);
+    const navigation = targetColumn.row === undefined ? undefined : {
+      cell: scene?.musicColumnCell(lane, targetColumn.row) ?? { lane, row: targetColumn.row },
+      guided: true,
+    };
+    // The shared preference chooses an album; reveal browse text only after the
+    // rail and near camera settle. Entry never opens album details.
+    select(targetColumn.index, navigation, false);
+    setOverview(false);
+    return;
+  }
   if (target.dataset.action === "dismiss-panel" && e.target !== target) return;
   if (target.dataset.theme) {
     setTheme(target.dataset.theme as Theme);
@@ -2368,10 +2419,17 @@ document.addEventListener("change", (e) => {
     preferences.arrayMode = normalizeMusicArrayMode(el.value);
     scene?.setMusicArrayMode(preferences.arrayMode);
     stage.dataset.arrayMode = preferences.arrayMode;
+    syncAlbumNavigation();
     savePrefs();
   }
   if (el.id === "remember-column-position") {
     preferences.rememberColumnPosition = el.checked;
+    // Changing this preference never navigates or changes playback. Re-enabling
+    // starts with the current album while other columns retain their session memory.
+    if (el.checked && records[selected]) columnMemory.set(
+      archiveColumns[fileLocation(selected).lane], records[selected].id,
+    );
+    syncAlbumNavigation();
     savePrefs();
   }
   if (el.id === "developer-mode") {
@@ -2413,8 +2471,8 @@ document.addEventListener("change", (e) => {
       void getNativePlayback().bgm("sfx-enabled", undefined, el.checked);
     savePrefs();
   }
-  if (el.id === "song-transition-setting") {
-    preferences.songTransition = normalizeSongTransition(el.value, preferences.songFade);
+  if (el.id === "song-fade-setting") {
+    preferences.songTransition = normalizeSongTransition(el.value);
     player.setSongTransitionMode(preferences.songTransition);
     savePrefs();
   }

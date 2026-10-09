@@ -157,12 +157,17 @@ export function paintCover(
   context.clearRect(0, 0, width, height);
   if (image) {
     const box = containCover(image.width, image.height, width - margin * 2, height - margin * 2);
+    // The contain fit can land a hair outside the physical margin through float
+    // rounding; clamp so the inset stays exact — the atlas UV contract depends
+    // on it, and `check-music-cover` asserts the bound per aspect ratio.
+    const x = Math.max(margin, box.x + margin);
+    const y = Math.max(margin, box.y + margin);
     context.drawImage(
       image.source,
-      box.x + margin,
-      box.y + margin,
-      box.width,
-      box.height,
+      x,
+      y,
+      Math.min(box.width, width - margin - x),
+      Math.min(box.height, height - margin - y),
     );
     return;
   }
@@ -388,7 +393,7 @@ export class CoverAtlas {
     this.tileRefs = new Int32Array(this.tileCount);
     this.slotTile = new Int32Array(count).fill(-1);
     for (let i = this.tileCount - 1; i >= 0; i--) this.freeTiles.push(i);
-    this.atlasAnisotropy = Math.min(4, anisotropy);
+    this.atlasAnisotropy = 1;
     this.atlas = this.createAtlasTexture();
     this.selectedTexture = new THREE.CanvasTexture(this.selectedCanvas);
     this.selectedTexture.colorSpace = THREE.SRGBColorSpace;
