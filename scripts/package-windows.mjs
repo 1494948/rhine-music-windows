@@ -39,13 +39,13 @@ const APP = path.join(REPO, 'app')
  */
 const DEFAULT_BASE =
   process.env.RHINE_BASE ?? path.join(os.homedir(), 'Downloads', 'Rhine-Music-Windows-0.3.0-二次修改')
-const DEFAULT_OUT = path.join(REPO, '..', '..', 'releases', 'rhine-music-local-mod', 'v0.3.0-local.4')
+const DEFAULT_OUT = path.join(REPO, '..', '..', 'releases', 'rhine-music-local-mod', 'v0.4.1-local.1')
 /** Files the launcher loads from its own directory. */
 const SHELL_FILES = ['RhineMusic.exe', 'libmpv-2.dll', 'app.ico', 'no-log.flag', 'LICENSE', 'NOTICE.md', 'README-Windows.md']
 /** Reference docs copied from the repo into the package root. */
 const DOCS = {
   '使用说明-本地修改版.md': path.join(REPO, 'docs/使用说明-本地修改版.md'),
-  '发布说明.md': path.join(REPO, 'docs/发布说明-v0.3.0-local.4.md'),
+  '发布说明.md': path.join(REPO, 'docs/发布说明-v0.4.1-local.1.md'),
 }
 
 function arg(name, fallback) {
