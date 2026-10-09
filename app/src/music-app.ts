@@ -87,6 +87,9 @@ import {
   type LyricPreviewTrack,
 } from "./lyrics-settings.ts";
 import { DetailSwitch } from "./music-detail-switch";
+import { version as appVersion } from "../package.json";
+import { normalizeMusicArrayMode, type MusicArrayMode } from "./music-array-layout";
+import { mountMusicWheelNavigation } from "./music-wheel-navigation";
 
 type Theme = "day" | "night";
 type Panel = "library" | "search" | "settings" | null;
@@ -122,6 +125,8 @@ const preferences = {
   ...{
     theme: "day" as Theme,
     sortMode: "genre" as MusicSortMode,
+    arrayMode: "filled" as MusicArrayMode,
+    rememberColumnPosition: true,
     quality: "original" as QualityPreset,
     reduced: false,
     volume: 0.65,
@@ -139,6 +144,8 @@ const preferences = {
     Partial<{
       theme: Theme;
       sortMode: MusicSortMode;
+      arrayMode: MusicArrayMode;
+      rememberColumnPosition: boolean;
       quality: QualityPreset;
       reduced: boolean;
       volume: number;
@@ -196,6 +203,8 @@ if (!Object.hasOwn(qualityPresets, preferences.quality))
   preferences.quality = "original";
 if (!["genre", "artist", "album"].includes(preferences.sortMode))
   preferences.sortMode = "genre";
+preferences.arrayMode = normalizeMusicArrayMode(preferences.arrayMode);
+preferences.rememberColumnPosition = preferences.rememberColumnPosition !== false;
 const sortLabels: Record<MusicSortMode, { name: string; column: string; code: string }> = {
   genre: { name: "按流派", column: "流派", code: "GENRE" },
   artist: { name: "按歌手名字", column: "歌手", code: "ARTIST" },
@@ -334,7 +343,7 @@ stage.innerHTML = `
     <div id="detail-surface" class="detail-surface"><article id="album-detail-content" tabindex="-1"></article></div>
   </section>
   <div id="music-empty" class="music-empty" hidden><small>YOUR PRIVATE COLLECTION</small><h1>让音乐进入这座档案馆。</h1><p>选择本地音乐文件夹，专辑封面会出现在每一张卡片上。</p><button data-action="library">设置音乐文件夹 ↗</button><button data-action="demo" class="subtle">先查看演示封面</button></div>
-  <div class="music-bottomline"><span>LOCAL COLLECTION <i>·</i> <span id="library-count">0 ALBUMS</span></span><span id="runtime-info">THREE.JS / LOCAL</span></div>
+  <div class="music-bottomline"><span>LOCAL COLLECTION <i>·</i> <span id="library-count">0 ALBUMS</span></span><span id="runtime-info">THREE.JS / LOCAL / V${appVersion}</span></div>
   <div id="music-panel-root"></div><div id="music-toast" role="status" aria-live="polite"></div>
   <div id="music-loading"><span class="loading-orbit"></span><strong>OPENING THE ARCHIVE</strong><small>正在载入三维专辑架</small></div>
 `;
@@ -1811,6 +1820,7 @@ function renderSettingsPanel() {
   $("#panel-body").innerHTML =
     `<section class="panel-section"><h3>外观主题</h3><div class="theme-cards">${(["day", "night"] as Theme[]).map((t) => `<button data-theme="${t}" aria-pressed="${preferences.theme === t}" class="${t}"><i></i><strong>${themeNames[t]}</strong><span>${t === "day" ? "暖白玻璃与日光" : "极简星空与透光白卡"}</span></button>`).join("")}</div></section>
     <section class="panel-section"><h3>音乐库排列</h3><label class="settings-row"><span>排列方式<small>切换后自动刷新页面</small></span><select id="music-sort" aria-label="音乐库排列方式">${(["genre", "artist", "album"] as MusicSortMode[]).map((value) => `<option value="${value}" ${preferences.sortMode === value ? "selected" : ""}>${sortLabels[value].name}</option>`).join("")}</select></label><p>按歌手时，同一歌手的专辑放在同一列；按专辑名时，按拼音或字母顺序排列，每 12 张一列。</p></section>
+    <section class="panel-section"><h3>高级设置 · 专辑阵列</h3><label class="settings-row"><span>专辑列显示<small>改变阵列数量，保留当前选择和播放</small></span><select id="music-array-mode" aria-label="专辑列显示方式"><option value="filled" ${preferences.arrayMode === "filled" ? "selected" : ""}>填充画面</option><option value="realistic" ${preferences.arrayMode === "realistic" ? "selected" : ""}>真实专辑列</option></select></label><p>填充画面：循环摆放封面，铺满视野。真实专辑列：每张专辑只摆放一次，各列独立居中；上下浏览到本列首尾时停止。</p><label class="settings-row"><span>保留每列浏览位置<small>开启后记住每列上次的位置</small></span><input type="checkbox" id="remember-column-position" ${preferences.rememberColumnPosition ? "checked" : ""}></label></section>
     <section class="panel-section" id="introduction-settings"><h3>专辑介绍</h3><p>从公开百科查询并更新专辑介绍，附上资料来源。介绍保存在本机，不需要配置 MusicBrainz 联系信息；音乐文件不会上传。</p><p id="introduction-coverage"></p><button class="primary-button" id="introduction-refresh" data-action="introductions-library">查询 / 更新专辑介绍 ↗</button><progress id="introduction-progress" aria-label="专辑介绍查询进度" max="1" value="0" hidden></progress><p id="introduction-status" class="scan-status" role="status" aria-live="polite"></p><details id="introduction-missing" hidden><summary></summary><ul></ul></details></section>
     ${qualityMarkup(renderQuality)}
     <section class="panel-section"><h3>动效与显示</h3><label class="settings-row"><span>减少动态效果<small>简化镜头、文字加载和页签过渡</small></span><input type="checkbox" id="reduced-motion" ${preferences.reduced ? "checked" : ""}></label><label class="settings-row"><span>空闲时停止绘制<small>2 分钟无操作后暂停三维渲染，移动鼠标或按键立即恢复；省电与降低风扇转速</small></span><input type="checkbox" id="idle-stop" ${preferences.idleStop ? "checked" : ""}></label><label class="settings-row"><span>玻璃雾度<small>100% 为原始质感；调高更朦胧，调低更通透。只影响玻璃外壳</small></span><span class="settings-slider"><input type="range" id="glass-frost" aria-label="玻璃雾度" min="0" max="200" step="5" value="${preferences.glassFrost}"><output id="glass-frost-output">${preferences.glassFrost}%</output></span></label><label class="settings-row"><span>锐化强度<small>0% 关闭。三维画面按较低分辨率渲染再放大，锐化找回局部对比；只作用于三维场景</small></span><span class="settings-slider"><input type="range" id="sharpen" aria-label="锐化强度" min="0" max="100" step="5" value="${preferences.sharpen}"><output id="sharpen-output">${preferences.sharpen}%</output></span></label><button class="text-button" data-action="fullscreen">切换全屏 ↗</button></section>
@@ -2240,6 +2250,16 @@ document.addEventListener("change", (e) => {
     location.reload();
     return;
   }
+  if (el.id === "music-array-mode") {
+    preferences.arrayMode = normalizeMusicArrayMode(el.value);
+    scene?.setMusicArrayMode(preferences.arrayMode);
+    stage.dataset.arrayMode = preferences.arrayMode;
+    savePrefs();
+  }
+  if (el.id === "remember-column-position") {
+    preferences.rememberColumnPosition = el.checked;
+    savePrefs();
+  }
   if (el.id === "quality-preset") {
     preferences.quality = el.value as QualityPreset;
     renderQuality = normalizeQuality(qualityPresets[preferences.quality]);
@@ -2508,7 +2528,7 @@ function frame(ms: number) {
     frameCount++;
     if (ms - lastFrame > 1500) {
       $("#runtime-info").textContent =
-        `${Math.round((frameCount * 1000) / (ms - lastFrame))} FPS / ${themeNames[preferences.theme]}`;
+        `${Math.round((frameCount * 1000) / (ms - lastFrame))} FPS / ${themeNames[preferences.theme]} / V${appVersion}`;
       // Keep read-only render diagnostics alongside the existing resolution
       // attributes, without adding controls or per-frame DOM work.
       if (!viewer?.isOpen) {
@@ -2559,6 +2579,7 @@ async function start() {
     scene.setReduced(preferences.reduced);
     scene.setGlassFrost(preferences.glassFrost);
     scene.setSharpen(preferences.sharpen);
+    scene.setMusicArrayMode(preferences.arrayMode);
     scene.onSelect = (index, cell) => {
       if (!boot?.active && presentation.phase === "archive" && !panel)
         select(index, cell ? { cell } : undefined);
@@ -2567,6 +2588,12 @@ async function start() {
       if (!boot?.active && presentation.phase === "archive" && !panel)
         axis === "lane" ? stepGenre(direction) : stepAlbum(direction);
     };
+    mountMusicWheelNavigation(stage, {
+      enabled: () => ready && !boot?.active && presentation.phase === "archive" && !panel &&
+        columnFiles(fileLocation(navigationSelection()).lane).length > 1,
+      navigate: stepAlbum,
+      context: () => fileLocation(navigationSelection()).lane,
+    });
     $("#music-loading").remove();
     updateSelection();
     if (albums.length && new URLSearchParams(location.search).get("scene") !== "archive") {
