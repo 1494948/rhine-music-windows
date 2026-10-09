@@ -90,6 +90,17 @@ import { DetailSwitch } from "./music-detail-switch";
 import { version as appVersion } from "../package.json";
 import { normalizeMusicArrayMode, type MusicArrayMode } from "./music-array-layout";
 import { mountMusicWheelNavigation } from "./music-wheel-navigation";
+import "./music-overview.css";
+import { MusicOverviewUI } from "./music-overview-ui";
+import { setupMotionLab } from "./music-motion-lab";
+import { setupLightingLab } from "./music-lighting-lab";
+import type { LightingLabController, LightingLabSettings } from "./music-lighting-lab";
+import {
+  getMusicMotionSpeed,
+  normalizeMusicMotionSpeed,
+  onMusicMotionSpeedChange,
+  setMusicMotionSpeed,
+} from "./music-motion-settings";
 
 type Theme = "day" | "night";
 type Panel = "library" | "search" | "settings" | null;
@@ -121,6 +132,7 @@ const save = (key: string, value: unknown) => {
     localStorage.setItem(key, JSON.stringify(value));
   } catch {}
 };
+const lightingLab = new URLSearchParams(location.search).get("lab") !== "0";
 const preferences = {
   ...{
     theme: "day" as Theme,
@@ -139,6 +151,10 @@ const preferences = {
     glassFrost: 100,
     sharpen: 50,
     renderQuality: undefined as RenderQuality | undefined,
+    developerMode: false,
+    motionDebug: false,
+    motionSpeed: 1,
+    lighting: undefined as Partial<LightingLabSettings> | undefined,
   },
   ...read<
     Partial<{
@@ -158,6 +174,10 @@ const preferences = {
       glassFrost: number;
       sharpen: number;
       renderQuality: RenderQuality;
+      developerMode: boolean;
+      motionDebug: boolean;
+      motionSpeed: number;
+      lighting: Partial<LightingLabSettings>;
     }>
   >("rhine-music-preferences", {}),
 };
@@ -205,6 +225,13 @@ if (!["genre", "artist", "album"].includes(preferences.sortMode))
   preferences.sortMode = "genre";
 preferences.arrayMode = normalizeMusicArrayMode(preferences.arrayMode);
 preferences.rememberColumnPosition = preferences.rememberColumnPosition !== false;
+preferences.developerMode = preferences.developerMode === true;
+preferences.motionDebug = preferences.motionDebug === true;
+preferences.motionSpeed = normalizeMusicMotionSpeed(preferences.motionSpeed);
+setMusicMotionSpeed(preferences.motionSpeed);
+const syncMotionScale = () => document.documentElement.style.setProperty("--music-motion-scale", String(1 / getMusicMotionSpeed()));
+syncMotionScale();
+onMusicMotionSpeedChange(syncMotionScale);
 const sortLabels: Record<MusicSortMode, { name: string; column: string; code: string }> = {
   genre: { name: "按流派", column: "流派", code: "GENRE" },
   artist: { name: "按歌手名字", column: "歌手", code: "ARTIST" },
@@ -322,6 +349,13 @@ stage.innerHTML = `
     </nav>
   </header>
   <div id="library-status" class="library-status"><i></i><span>正在读取本地音乐索引</span></div>
+  <button type="button" class="music-view-toggle" disabled data-action="overview" aria-pressed="false" aria-label="切换缩略图模式">${svg('<rect x="3" y="3" width="6" height="7"/><rect x="15" y="3" width="6" height="7"/><rect x="3" y="14" width="6" height="7"/><rect x="15" y="14" width="6" height="7"/>')}<span>缩略图模式</span><kbd>V</kbd></button>
+  <section class="music-overview" id="music-overview" aria-label="音乐库缩略图总览" hidden>
+    <div class="overview-heading"><small>COLLECTION / OVERVIEW</small><h2>${sortLabel.name}浏览收藏</h2><p>点击列名展开入口 · 点击进入回到标准视图</p></div>
+    <div class="overview-columns" id="overview-columns"></div>
+    <button type="button" class="overview-return" data-action="overview-return" aria-label="返回标准视图">${svg('<path d="M15 5l-7 7 7 7"/>')}<span>返回近景</span><kbd>V</kbd></button>
+    <nav class="overview-controls" aria-label="总览列导航"><button data-action="genre-prev" aria-label="总览上一列">←</button><span>← → 切换${sortLabel.column}</span><button data-action="genre-next" aria-label="总览下一列">→</button></nav>
+  </section>
   <section id="music-browse" class="music-browse" aria-label="专辑浏览">
     <div class="music-browse-veil" aria-hidden="true"></div>
     <div class="album-callout"><p class="music-eyebrow">MUSIC ARCHIVE <span>／</span> <span id="selection-genre"></span></p>
@@ -444,6 +478,39 @@ const browseTransition = new SurfaceTransition(
   "cubic-bezier(0.45, 0, 0.25, 1)",
   [$(".music-browse-veil"), $(".album-callout"), $(".music-navigation"), $(".music-keyhint")],
 );
+
+/** Overview (thumbnail) mode: a pulled-back camera that labels the real columns. */
+let overview = false;
+let overviewRevealPending = false;
+const overviewUI = new MusicOverviewUI($("#music-overview"), $("#overview-columns"), () => {
+  const target = overview ? $(".overview-return") : $('[data-action="overview"]');
+  target.focus({ preventScroll: true });
+});
+function setOverview(active: boolean, reveal = true) {
+  if (active && (!ready || !albums.length || boot?.active || panel || mode !== "archive")) return;
+  overview = active;
+  overviewRevealPending = !active && reveal;
+  scene?.setMusicOverview(active);
+  stage.dataset.overview = String(active);
+  const toggle = $<HTMLButtonElement>('[data-action="overview"]');
+  toggle.setAttribute("aria-pressed", String(active));
+  for (const item of stage.querySelectorAll<HTMLElement>(".music-topnav > :not(.minimal-transport)")) item.inert = active;
+  toggle.inert = active || !!panel;
+  overviewUI.setActive(active, preferences.reduced);
+  $("#music-overview").inert = !active || !!panel;
+  $("#music-browse").inert = active || !!panel;
+  $("#music-browse").setAttribute("aria-hidden", String(active));
+  if (active) {
+    browseTransition.hide(preferences.reduced);
+  }
+}
+function updateOverview() {
+  if (!scene || (!overview && $("#music-overview").hidden)) return;
+  overviewUI.update(scene.getOverviewColumns(), stage.clientWidth, stage.clientHeight,
+    scene.musicOverviewProgress, preferences.reduced, sortLabel.column);
+}
+let motionControls: ReturnType<typeof setupMotionLab> | undefined;
+let lightingControls: LightingLabController | undefined;
 
 /**
  * Lyrics and the detail/lyrics switch.
@@ -780,6 +847,7 @@ boot = new MusicBoot(stage, {
 });
 function showBrowseSurface() {
   if (!albums.length || boot?.active) return;
+  if (overview) { $("#music-browse").inert = true; return; }
   browseTransition.show(preferences.reduced);
   $("#music-browse").inert = !!panel;
   $("#music-browse").setAttribute("aria-hidden", "false");
@@ -1000,6 +1068,11 @@ function updateStatus() {
   $("#library-count").textContent = demo
     ? "DEMONSTRATION"
     : `${n} ALBUMS / ${tracks} TRACKS`;
+  const overviewToggle = document.querySelector<HTMLButtonElement>('[data-action="overview"]');
+  if (overviewToggle) {
+    overviewToggle.hidden = !n;
+    overviewToggle.disabled = !ready || !n;
+  }
 }
 function updateSelection(navigation?: ArchiveNavigation) {
   const a = currentAlbum();
@@ -1657,6 +1730,9 @@ function closePanel(after?: () => void) {
     ])
       node.inert = false;
     $("#music-browse").inert = presentation.phase !== "archive";
+    if (overview) $("#music-browse").inert = true;
+    $("#music-overview").inert = !overview;
+    $<HTMLButtonElement>('[data-action="overview"]').inert = overview;
     $("#music-detail").inert = presentation.phase !== "detail";
     panelFocus?.focus({ preventScroll: true });
     const next = pendingPanelAfter;
@@ -1672,6 +1748,8 @@ function openPanel(next: Panel) {
   panelClosing = false;
   if (!panel) panelFocus = document.activeElement as HTMLElement;
   panel = next;
+  $("#music-overview").inert = true;
+  $<HTMLButtonElement>('[data-action="overview"]').inert = true;
   const titles = {
     library: ["MUSIC LIBRARY", "本地音乐库"],
     search: ["FIND MUSIC", "搜索专辑与歌曲"],
@@ -1828,6 +1906,18 @@ function renderSettingsPanel() {
     ${lyricsMarkup(lyricSettings, previewTracks())}
     ${nativeKernelMarkup()}
     <section class="panel-section"><h3>开发与资源</h3><p>音乐适配与维护：<a href="https://github.com/RonaldDeng/Rhine-Music-Demo" target="_blank" rel="noopener">RonaldDeng ↗</a><br>原版界面：<a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener">LBEILC / RhineLabUI ↗</a></p><p><a href="/licenses/project-mit.txt" target="_blank" rel="noopener">代码 MIT 许可 ↗</a> · <a href="https://github.com/RonaldDeng/Rhine-Music-Demo/blob/v0.2.0/NOTICE.md" target="_blank" rel="noopener">版权与资源说明 ↗</a></p><a href="/?original=1&scene=archive" target="_blank" rel="noopener">打开原版档案界面 ↗</a><p><a href="/fonts/MiSans-license.pdf" target="_blank" rel="noopener">MiSans 字体许可 ↗</a></p></section>`;
+  if (lightingLab)
+    $("#panel-body").insertAdjacentHTML(
+      "beforeend",
+      `<section class="panel-section" id="developer-settings">
+      <h3>开发者调试模式</h3>
+      <label class="settings-row"><span>光效调试面板<small>调节光带节奏、亮度和范围</small></span><input type="checkbox" id="developer-mode" aria-label="光效调试面板" ${preferences.developerMode ? "checked" : ""}></label>
+      <label class="settings-row"><span>动画速度调试面板<small>统一调节专辑、镜头、文字与光带速度</small></span><input type="checkbox" id="developer-motion" aria-label="动画速度调试面板" ${preferences.motionDebug ? "checked" : ""}></label>
+      <p>两个面板可以同时打开。调节即时生效、自动保存在本机，无需刷新；收起或关闭面板仍保留效果。</p>
+      <button class="text-button" data-action="lighting-debug" ${preferences.developerMode ? "" : "hidden"}>打开光效调试面板 ↗</button>
+      <button class="text-button" data-action="motion-debug" ${preferences.motionDebug ? "" : "hidden"}>打开动画速度调试面板 ↗</button>
+    </section>`,
+    );
   updateQuality();
   updateIntroductionStatus();
   syncLyricsUI(lyricSettings);
@@ -1987,6 +2077,24 @@ document.addEventListener("click", (e) => {
     return;
   }
   switch (action) {
+    case "overview-return":
+      setOverview(false);
+      break;
+    case "overview":
+      setOverview(!overview);
+      break;
+    case "lighting-debug":
+      closePanel(() => {
+        setMode("archive");
+        lightingControls?.focus();
+      });
+      break;
+    case "motion-debug":
+      closePanel(() => {
+        setMode("archive");
+        motionControls?.focus();
+      });
+      break;
     case "close-panel":
     case "dismiss-panel":
       closePanel();
@@ -2260,6 +2368,20 @@ document.addEventListener("change", (e) => {
     preferences.rememberColumnPosition = el.checked;
     savePrefs();
   }
+  if (el.id === "developer-mode") {
+    preferences.developerMode = el.checked;
+    lightingControls?.setEnabled(el.checked);
+    const debugButton = document.querySelector<HTMLElement>('[data-action="lighting-debug"]');
+    if (debugButton) debugButton.hidden = !el.checked;
+    savePrefs();
+  }
+  if (el.id === "developer-motion") {
+    preferences.motionDebug = el.checked;
+    motionControls?.setEnabled(el.checked);
+    const debugButton = document.querySelector<HTMLElement>('[data-action="motion-debug"]');
+    if (debugButton) debugButton.hidden = !el.checked;
+    savePrefs();
+  }
   if (el.id === "quality-preset") {
     preferences.quality = el.value as QualityPreset;
     renderQuality = normalizeQuality(qualityPresets[preferences.quality]);
@@ -2401,6 +2523,10 @@ document.addEventListener("keydown", (e) => {
     searchGenre = "";
     openPanel("search");
   }
+  if (e.key.toLowerCase() === "v" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+    e.preventDefault();
+    setOverview(!overview);
+  }
   if (e.key === "ArrowLeft") {
     e.preventDefault();
     stepGenre(-1);
@@ -2497,6 +2623,12 @@ function frame(ms: number) {
   if (scene) {
     const opening = boot?.update(ms / 1000);
     if (!viewer?.isOpen) scene.update(ms / 1000, opening?.cinema);
+    updateOverview();
+    if (overviewRevealPending && !overview && !boot?.active &&
+      scene.musicOverviewProgress < .02 && scene.musicArchiveReady) {
+      overviewRevealPending = false;
+      showBrowseSurface();
+    }
     viewer?.update(ms / 1000);
     if (!viewer?.isOpen && !boot?.active) presentation.update();
     const phase = presentation.phase;
@@ -2560,14 +2692,41 @@ async function start() {
     fit();
     scene = new ArchiveScene($("#three-scene"));
     // Keep a direct visual comparison URL without adding another user setting.
-    if (new URLSearchParams(location.search).get("lighting") !== "baseline")
+    if (lightingLab || new URLSearchParams(location.search).get("lighting") !== "baseline")
       scene.enableSelectionLighting();
+    if (lightingLab) {
+      const devPanels = document.createElement("div");
+      devPanels.className = "music-dev-panels";
+      stage.append(devPanels);
+      const closeDebugPanel = (key: "developerMode" | "motionDebug") => {
+        preferences[key] = false;
+        savePrefs();
+        if (panel === "settings") renderSettingsPanel();
+        else document.querySelector<HTMLButtonElement>('[data-action="settings"]')?.focus({ preventScroll: true });
+      };
+      motionControls = setupMotionLab(devPanels, {
+        enabled: preferences.motionDebug,
+        onChange: (speed) => { preferences.motionSpeed = speed; savePrefs(); },
+        onClose: () => closeDebugPanel("motionDebug"),
+      });
+      lightingControls = setupLightingLab(devPanels, {
+        setExperiment: (settings) => scene?.setLightingExperiment(settings),
+        enabled: preferences.developerMode,
+        initial: preferences.lighting,
+        onChange: (settings) => {
+          preferences.lighting = settings;
+          savePrefs();
+        },
+        onClose: () => closeDebugPanel("developerMode"),
+      });
+    }
     await Promise.all([
       scene.load(),
       document.fonts.load("400 20px MiSans"),
       document.fonts.load("600 20px MiSans"),
     ]);
     ready = true;
+    $<HTMLButtonElement>('[data-action="overview"]').disabled = false;
     $("#three-scene canvas").setAttribute(
       "aria-label",
       `三维专辑阵列，左右切${sortLabel.column}，上下切专辑`,
@@ -2581,8 +2740,10 @@ async function start() {
     scene.setSharpen(preferences.sharpen);
     scene.setMusicArrayMode(preferences.arrayMode);
     scene.onSelect = (index, cell) => {
-      if (!boot?.active && presentation.phase === "archive" && !panel)
+      if (!boot?.active && presentation.phase === "archive" && !panel) {
         select(index, cell ? { cell } : undefined);
+        if (overview) setOverview(false);
+      }
     };
     scene.onNavigate = (axis, direction) => {
       if (!boot?.active && presentation.phase === "archive" && !panel)
