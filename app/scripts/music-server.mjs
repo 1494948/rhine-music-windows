@@ -5,6 +5,7 @@ import { promises as fs, createReadStream } from 'node:fs'
 import { MusicLibraryStore, safeRootList } from './music-library.mjs'
 import { readLyrics } from './lyrics.mjs'
 import { AlbumOnlineResolver } from './album-online.mjs'
+import { AudioDecoder, NativeAudioOutput } from './music-audio.mjs'
 
 const PROJECT_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json', '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/ogg', '.ico': 'image/x-icon', '.webmanifest': 'application/manifest+json' }
@@ -90,6 +91,8 @@ export async function createMusicServer({
   // One resolver per server so its disk cache, in-memory cache and host
   // breakers are shared across requests instead of rebuilt per album view.
   const onlineResolver = new AlbumOnlineResolver({ dataDir: store.dataDir })
+  const decoder = new AudioDecoder({ dataDir: store.dataDir ?? dataDir })
+  const output = new NativeAudioOutput({ dataDir: store.dataDir ?? dataDir, decoder, trackFile: (id) => store.trackFile(id) })
   const server = http.createServer(async (request, response) => {
     response.setHeader('X-Content-Type-Options', 'nosniff')
     response.setHeader('Referrer-Policy', 'same-origin')
@@ -102,6 +105,33 @@ export async function createMusicServer({
       if (route.includes('\0') || route.includes('\\')) return json(response, 400, { error: '无效路径' })
       const get = request.method === 'GET' || request.method === 'HEAD'
       if (route === '/api/health' && get) return json(response, 200, { service: 'rhine-local-music', projectDir: PROJECT_DIR, pid: process.pid })
+      if (route === '/api/audio/capabilities' && get) {
+        await decoder.init()
+        let devices = [], nativeError = null
+        if (decoder.ffmpeg && process.platform === 'darwin') {
+          try { devices = await output.devices() } catch (error) { nativeError = error.message }
+        }
+        return json(response, 200, { decoderAvailable: !!decoder.ffmpeg, decoder: decoder.version ?? null, decoderError: decoder.error ?? null, nativeAvailable: !!decoder.ffmpeg && process.platform === 'darwin' && !nativeError, nativeError, devices: [{ id: 'default', name: '系统默认输出' }, ...devices], mode: 'shared', formats: ['APE', 'WAV', 'FLAC', 'ALAC', 'AIFF', 'MP3', 'AAC', 'OGG', 'OPUS', 'WV', 'DSF', 'DFF'], dsdPlayback: 'pcm' })
+      }
+      const prepare = /^\/api\/audio\/prepare\/([a-zA-Z0-9-]+)$/.exec(route)
+      const decodedAudio = /^\/api\/decoded-audio\/([a-zA-Z0-9-]+)$/.exec(route)
+      if ((prepare && request.method === 'POST') || (decodedAudio && get)) {
+        if (prepare) await bodyJson(request)
+        const id = (prepare ?? decodedAudio)[1]
+        const controller = new AbortController()
+        const cancel = () => { if (!response.writableEnded) controller.abort() }
+        response.once('close', cancel)
+        try {
+          const decoded = await decoder.prepare(store.trackFile(id), { signal: controller.signal })
+          if (prepare) {
+            const { path: _path, allowedRoot: _root, ...metadata } = decoded
+            return json(response, 200, { ...metadata, audioUrl: `/api/decoded-audio/${id}` })
+          }
+          return await serveFile(request, response, decoded, { cache: 'private, no-cache' })
+        } finally { response.removeListener('close', cancel) }
+      }
+      if (route === '/api/output/state' && get) return json(response, 200, await output.command({ action: 'state' }))
+      if (route === '/api/output/command' && request.method === 'POST') return json(response, 200, await output.command(await bodyJson(request)))
       if (route === '/api/library' && get) {
         // A user or Codex can edit genre-rules.json while the player is running.
         await store.reloadRules()
@@ -139,6 +169,13 @@ export async function createMusicServer({
         if (value.albumIds !== undefined && (!Array.isArray(value.albumIds) || value.albumIds.length > 10000 || value.albumIds.some((id) => typeof id !== 'string'))) return json(response, 400, { error: 'albumIds 必须是专辑 ID 数组' })
         if (value.force !== undefined && typeof value.force !== 'boolean') return json(response, 400, { error: 'force 必须为布尔值' })
         void store.updateIntroductions({ albumIds: value.albumIds, force: value.force ?? false }).catch(() => {})
+        return json(response, 202, store.snapshot())
+      }
+      if (route === '/api/library/credits' && request.method === 'POST') {
+        const value = await bodyJson(request)
+        if (value.albumIds !== undefined && (!Array.isArray(value.albumIds) || value.albumIds.length > 10000 || value.albumIds.some((id) => typeof id !== 'string'))) return json(response, 400, { error: 'albumIds 必须是专辑 ID 数组' })
+        if (value.force !== undefined && typeof value.force !== 'boolean') return json(response, 400, { error: 'force 必须为布尔值' })
+        void store.updateCredits({ albumIds: value.albumIds, force: value.force ?? false }).catch(() => {})
         return json(response, 202, store.snapshot())
       }
       const audio = /^\/api\/audio\/([a-zA-Z0-9-]+)$/.exec(route)
@@ -204,9 +241,10 @@ export async function createMusicServer({
       else response.destroy()
     }
   })
+  server.once('close', () => { decoder.dispose(); output.dispose() })
   server.requestTimeout = 30_000
   if (autoScan) server.once('listening', () => { void store.scan().catch(() => {}) })
-  return { server, store }
+  return { server, store, decoder, output }
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

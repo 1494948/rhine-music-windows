@@ -7,8 +7,8 @@ import { poolAlbumCapacity, LOOP_ROWS } from "./archive-loop.ts";
 // Print on the glass surface. No transmitting/frosted layer sits over the image.
 export const COVER_SIZE = MUSIC_COVER;
 /** `width`/`height` are the source artwork's own size; `source` is the decode. */
-type CoverImage = { source: HTMLCanvasElement | ImageBitmap; width: number; height: number };
-const COVER_PAINT_SIZE = 1024;
+type CoverImage = { source: HTMLCanvasElement | ImageBitmap | HTMLImageElement; width: number; height: number };
+export const COVER_PAINT_SIZE = 1024;
 /**
  * The detail canvas is COVER_PAINT_SIZE. Tiles are `tileWidth` — 256 in
  * practice, and never more than a quarter of this — so one decoded thumbnail
@@ -142,9 +142,9 @@ export function imageSizeFromHeader(
   return undefined;
 }
 
-function paintCover(
+export function paintCover(
   canvas: HTMLCanvasElement,
-  record: ArchiveRecord | undefined,
+  record: Pick<ArchiveRecord, "title"> | undefined,
   image?: CoverImage,
 ) {
   const context = canvas.getContext("2d")!;
@@ -975,6 +975,43 @@ export class CoverAtlas {
       mesh.userData.snapshotSurface = undefined;
       this.snapshotFree.push(surface);
     }
+  }
+
+  /**
+   * v0.4.1 compatibility surface. This atlas uploads each painted tile eagerly
+   * (uploadTile inside draw), so there is never a deferred dirty queue to flush;
+   * the method still refreshes the renderer reference and reports zero work so
+   * the scene's per-frame flush loop becomes a no-op.
+   */
+  flushUploads(renderer: THREE.WebGLRenderer, _maxTiles = 8) {
+    this.renderer = renderer;
+    return 0;
+  }
+
+  /** v0.4.1 compatibility: visible requests are decoded eagerly, so nothing is pending. */
+  async prepareVisible(_timeoutMs = 1200) {
+    return { settled: true, ...this.getStats() };
+  }
+
+  getStats() {
+    return {
+      atlasWidth: this.atlasCanvas.width,
+      atlasHeight: this.atlasCanvas.height,
+      atlasBytes: this.atlasCanvas.width * this.atlasCanvas.height * 4,
+      tileWidth: this.tileWidth,
+      tileHeight: this.tileHeight,
+      activeDecodes: 0,
+      queuedDecodes: 0,
+      pendingImages: 0,
+      peakDecodes: 0,
+      cachedImages: 0,
+      cachedBytes: this.tiles.decodedBytes + this.details.decodedBytes,
+      dirtyTiles: 0,
+      uploadedTiles: 0,
+      uploadedBytes: 0,
+      uploadBatches: 0,
+      gpuInitialized: Boolean(this.renderer),
+    };
   }
 
   reset() {
