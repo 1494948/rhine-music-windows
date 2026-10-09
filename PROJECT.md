@@ -8,7 +8,9 @@
 
 ## 2. 状态
 
-**可用** · 最后更新：2026-10-06
+**可用** · 最后更新：2026-10-09
+
+- **第四轮（2026-10-09，已提交 5 阶段）**：移植上游 **v0.4.1** 新特性 —— 总览缩略图模式、真实专辑列（完整独立浏览 + 列位置记忆）、滚轮导航、行灯、光照/动效实验室、开场、歌曲衔接三模式、版本标识；音频后端保持本机 libmpv；`tsc` 0、`vite build` 126 模块、19/21 非联网检查通过。已打包 `releases/rhine-music-local-mod/v0.4.1-local.1/`（515.5MB，MD5 全一致，包内冒烟通过）。详见 §7 变更记录
 
 - 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板（四级来源）；需求 C 小白条详情⇄歌词切换（含视觉精修与惯性抛掷）；需求 D 歌词解析/接口/动效面板；**需求 B 的第四层「线上补充专辑详情与背景」已补全并真机实测**；`app/dist` 已回灌为最新构建（175 文件，MD5 校验一致）
 - **第二轮（2026-10-06）已完成**：需求 A 的第二轮修复（**图集脏矩形上传**，见 §6.2；**详情栏就地增量更新**）；需求 D 新增**「歌词」参数设置模块**（字号/行距/颜色/渐变/浮动/延迟等 11 项，即时生效并持久化）；需求 D 的歌词细线已移除、动效按 AMLL 模型重做（逐字柔边遮罩 + 未唱部分降亮 + 字号纵深 + 辉光）；**线上来源整体替换为国内可访问集合**（QQ 音乐 / 百度百科 / MusicBrainz，实测 4/4 命中，见 §6.3）
@@ -125,8 +127,8 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 本地分支 | `main`（开发主干）、`rhine-music-local-mod`（与远端同名，跟踪 `origin/rhine-music-local-mod`） |
 | 基线标签 | `baseline/thirdparty-0.3.0` |
 | 产品名 | Rhine Music（莱茵音乐）· 第三方二次修改版 |
-| 当前版本 | 本地包 `v0.3.0-local.4`（上游 `app/package.json` 仍为 `0.3.0`，不改上游版本号） |
-| 产物位置 | `releases/rhine-music-local-mod/v0.3.0-local.4/`（515 MB） |
+| 当前版本 | 本地包 `v0.4.1-local.1`（`app/package.json` 已随上游升到 `0.4.1`） |
+| 产物位置 | `releases/rhine-music-local-mod/v0.4.1-local.1/`（515.5 MB，已出包**未上传**） |
 | Release | tag `v0.3.0-local.4`，**标为 Pre-release**，附件 `RhineMusic-v0.3.0-local.4-Windows-x64.zip`（231.3 MB） |
 | 产物命名规则 | `v<上游版本>-local.<本地迭代号>` |
 | 打开方式 | 双击产物根目录的 `RhineMusic.exe`（原生 WebView2 窗口，不需要浏览器） |
@@ -440,4 +442,5 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 2026-10-06 | **第三轮 P4（数据源扩充）**：`album-online.mjs` 新增 `netease()`（`/api/search/get/web` 定 id → `/api/v1/album/{id}` 取 `description` 长简介，`opencc-js` 繁转简 + 空白压缩，`publishTime`→`millisToDate`，双重复核防错答）与 `discogs()`（年份/流派/载体，**不带 artist 参数**——Discogs 用拉丁化名匹配中文歌手名返回 0 行，按 "Artist - Title" 拆行匹配）、`wikidata()`（P577 发行日期，`wbsearchentities`+`wbgetentities` 用 alias 匹配中文 label，独立 3s 预算）；`resolve()` 第一阶段加 netease、第二阶段（末位）加 discogs/wikidata；`request()` 支持 per-call 超时；新增 `check-music-online-sources.mjs` 可达性自检（Node fetch 逐主机报 status/耗时/JSON）并纳入 `check:music`；`check-music-online.mjs` 补 netease/discogs/wikidata 的命中/错答拒绝/繁转简/末位门控断言；`music-app.ts`/`music-archive.ts` 来源文案加网易云。**覆盖率 39/79(49.4%) → 60/78(76.9%)，+27.5pp，报错 0**（netease 19 张、discogs 1 张） | 用户明确要求"把 P4 也做了，专辑背景知识用爬虫爬取"；网易云 v1 接口免登录可答且提供 QQ 缺失的长简介（19 张命中里 5 张是 QQ 没覆盖的），Discogs/Wikidata 按计划作 best-effort 末位、失败不影响整体 |
 | 2026-10-09 | **第四轮规划（未写代码）**：勘查上游 `RonaldDeng/Rhine-Music-Demo v0.4.1`（`git diff v0.3.0 v0.4.1` = 193 文件/+2 万行，大头在 squash 提交 `c7da0b5`），产出 `docs/第四轮改造计划.md`；grilling 已与用户对齐四项决策（一次性全量 / 保持 libmpv / 本地改动为尊 / Android 用 WebView 壳+原生音频）。**关键结论**：v0.4.1 是 macOS 专属（音频=FFmpeg+CoreAudio，Windows 无原生音频，npm 依赖与 v0.3.0 完全一致）；MT-gar 的"在线书架"被作者删除，非 v0.4.1 正式特性；上游 clone 在 `playground/rhine-v041-port/upstream` | 用户要求"先出计划、定稿后换模型写代码"；本条目为换模型交接的落点 |
 | 2026-10-09 | **第四轮·阶段一（移植源码，编译通过）**：批量拷入 v0.4.1 新增/更新的 76 个文件（总览、真实列、滚轮、行灯、光照/动效实验室、开场、切歌过渡、搜索、credits、音乐库/服务端脚本）；三方合并 8 个冲突文件（本地为尊）：`scene.ts`/`music-model.ts`/`music-server.mjs`/`appearance.ts`/`archive-loop.ts`/`music-transport-title.css`/`music.css`/`cover-atlas.ts`（cover-atlas 补 `flushUploads`/`prepareVisible`/`getStats` 兼容接口，导出 `COVER_PAINT_SIZE`/`paintCover`）；音频后端保持 libmpv（`music-player.ts` 未动）。`npx tsc --noEmit` 退出码 0 | 用户要求一次性全量移植；冲突处理原则"本地为尊"，音频"保持 libmpv" |
+| 2026-10-09 | **第四轮·打包（已出包，未上传）**：`app/dist` 用 `robocopy /MIR` 回灌最新构建（176 文件、入口 `index-DlHPQ_pm.js` 与 playground 构建逐字一致）；`scripts/package-windows.mjs` 默认输出改为 `v0.4.1-local.1` 并指向新发布说明；产出 `releases/rhine-music-local-mod/v0.4.1-local.1/`（**515.5 MB**，18.3s，MD5 源 vs 包内**全部一致**）；脚本闭包 8 个（含 `qq-credits.mjs`/`local-music-credits.mjs`/`music-audio.mjs`/`lyrics.mjs`/`album-online.mjs`）、`node_modules` 15 包 6.74MB。**包内冒烟通过**：`runtime/node.exe` 起 `music-server.mjs` 返回真实曲库（音乐目录 `C:\Users\<用户名>\Music\Music`）。新增 `docs/发布说明-v0.4.1-local.1.md`。**上传待办**：按 §5 两道硬约束剥离私人数据后推 Release（tag `v0.4.1-local.1`，标 Pre-release） | 用户要求"测试没问题后上传"——先把可双击验收的包做出来，上传等真机确认 |
 | 2026-10-09 | **第四轮·阶段三~五（继续接线，已提交）**：①总览缩略图模式（markup + MusicOverviewUI + setOverview/updateOverview + V 快捷键 + inert 联动 + overviewLane 展开 / overviewEnterLane 进入）；②光照/动效实验室（developerMode/motionDebug/motionSpeed/lighting 偏好 + `--music-motion-scale` + `setupMotionLab`/`setupLightingLab` + 设置面板「开发者调试模式」）；③歌曲衔接三模式（player 新增 `songTransition`/`setSongTransitionMode`，控件沿用 id `song-fade-setting`，旧 `songFade` 键退休）；④真实列独立浏览完整逻辑（`syncAlbumNavigation`/`resolveColumnSelection`/mode 感知 `stepAlbum`/总览折叠 `stepGenre`/列记忆守卫）；⑤cover-atlas 浮点内缩夹取 + 图集各向异性对齐 1。**验证：tsc 0；`vite build` 126 模块 0；19/21 个非联网检查通过**（`check-music-player` 4/4）。3 项未过均为**上游检查夹具与本地实现不兼容**，非缺陷：`check-music-song-transition-ui`/`check-music-column-position`（上游夹具未定义本地 settings 面板的 `lyricsMarkup`）、`check-music-cover`（上游断言图集着色器 `vCoverTile` 夹取，本地图集用透明边距方案，属"本地为尊"）。**待续**：QQ 制作名单客户端接线、浏览器侧 gapless、帧时序（MusicFrameTiming）、打包 `v0.4.1-local.1` 并上传、任务 2 Android | 分期推进，每阶段 tsc+build+检查验证；剩余项按"本地为尊 + 保持 libmpv"原则显式登记 |
