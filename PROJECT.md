@@ -10,7 +10,7 @@
 
 **可用** · 最后更新：2026-10-09
 
-- **第四轮（2026-10-09，已提交 5 阶段）**：移植上游 **v0.4.1** 新特性 —— 总览缩略图模式、真实专辑列（完整独立浏览 + 列位置记忆）、滚轮导航、行灯、光照/动效实验室、开场、歌曲衔接三模式、版本标识；音频后端保持本机 libmpv；`tsc` 0、`vite build` 126 模块、19/21 非联网检查通过。已打包 `releases/rhine-music-local-mod/v0.4.1-local.1/`（515.5MB，MD5 全一致，包内冒烟通过）。详见 §7 变更记录
+- **第四轮（2026-10-09，已提交 5 阶段）**：移植上游 **v0.4.1** 新特性 —— 总览缩略图模式、真实专辑列（完整独立浏览 + 列位置记忆）、滚轮导航、行灯、光照/动效实验室、开场、歌曲衔接三模式、版本标识；音频后端保持本机 libmpv；`tsc` 0、`vite build` 126 模块、19/21 非联网检查通过。已打包 `releases/rhine-music-local-mod/v0.4.1-local.1/`（515.5MB，MD5 全一致，包内冒烟通过），并**已发布到 GitHub Release `v0.4.1-local.1`（Pre-release，附件 231.3MB）**。详见 §5 与 §7 变更记录
 
 - 已完成：源码解包入库（baseline 标签 `baseline/thirdparty-0.3.0`）；需求 A 跨列卡顿的根因定位与第一轮修复（图集容量 + 缩略图离线程化）；需求 B 专辑档案面板（四级来源）；需求 C 小白条详情⇄歌词切换（含视觉精修与惯性抛掷）；需求 D 歌词解析/接口/动效面板；**需求 B 的第四层「线上补充专辑详情与背景」已补全并真机实测**；`app/dist` 已回灌为最新构建（175 文件，MD5 校验一致）
 - **第二轮（2026-10-06）已完成**：需求 A 的第二轮修复（**图集脏矩形上传**，见 §6.2；**详情栏就地增量更新**）；需求 D 新增**「歌词」参数设置模块**（字号/行距/颜色/渐变/浮动/延迟等 11 项，即时生效并持久化）；需求 D 的歌词细线已移除、动效按 AMLL 模型重做（逐字柔边遮罩 + 未唱部分降亮 + 字号纵深 + 辉光）；**线上来源整体替换为国内可访问集合**（QQ 音乐 / 百度百科 / MusicBrainz，实测 4/4 命中，见 §6.3）
@@ -128,8 +128,9 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 基线标签 | `baseline/thirdparty-0.3.0` |
 | 产品名 | Rhine Music（莱茵音乐）· 第三方二次修改版 |
 | 当前版本 | 本地包 `v0.4.1-local.1`（`app/package.json` 已随上游升到 `0.4.1`） |
-| 产物位置 | `releases/rhine-music-local-mod/v0.4.1-local.1/`（515.5 MB，已出包**未上传**） |
-| Release | tag `v0.3.0-local.4`，**标为 Pre-release**，附件 `RhineMusic-v0.3.0-local.4-Windows-x64.zip`（231.3 MB） |
+| 产物位置 | `releases/rhine-music-local-mod/v0.4.1-local.1/`（515.5 MB，含公开版 ZIP `RhineMusic-v0.4.1-local.1-Windows-x64.zip` 231.3 MB） |
+| Release | tag **`v0.4.1-local.1`**（2026-10-09 已发布，指向提交 `604dd21`），**标为 Pre-release**，附件 `RhineMusic-v0.4.1-local.1-Windows-x64.zip`（231.3 MB，asset id `625102430`，`state=uploaded`） |
+| 公开版 ZIP 的剥离规则 | 生成时**剔除** `music-data-v3/webview2/`（浏览器缓存）、`music-data-v3/library-index.json`（真实曲库）、`music-data-v3/artwork/`（真实封面），并把 `config.json` 的 `roots` 置空 —— 生成脚本 `playground/rhine-v041-port/make-public-zip.py`（复核残留 0 项） |
 | 产物命名规则 | `v<上游版本>-local.<本地迭代号>` |
 | 打开方式 | 双击产物根目录的 `RhineMusic.exe`（原生 WebView2 窗口，不需要浏览器） |
 
@@ -444,3 +445,4 @@ cd "C:/AI Document/projects/rhine-music-local-mod"
 | 2026-10-09 | **第四轮·阶段一（移植源码，编译通过）**：批量拷入 v0.4.1 新增/更新的 76 个文件（总览、真实列、滚轮、行灯、光照/动效实验室、开场、切歌过渡、搜索、credits、音乐库/服务端脚本）；三方合并 8 个冲突文件（本地为尊）：`scene.ts`/`music-model.ts`/`music-server.mjs`/`appearance.ts`/`archive-loop.ts`/`music-transport-title.css`/`music.css`/`cover-atlas.ts`（cover-atlas 补 `flushUploads`/`prepareVisible`/`getStats` 兼容接口，导出 `COVER_PAINT_SIZE`/`paintCover`）；音频后端保持 libmpv（`music-player.ts` 未动）。`npx tsc --noEmit` 退出码 0 | 用户要求一次性全量移植；冲突处理原则"本地为尊"，音频"保持 libmpv" |
 | 2026-10-09 | **第四轮·打包（已出包，未上传）**：`app/dist` 用 `robocopy /MIR` 回灌最新构建（176 文件、入口 `index-DlHPQ_pm.js` 与 playground 构建逐字一致）；`scripts/package-windows.mjs` 默认输出改为 `v0.4.1-local.1` 并指向新发布说明；产出 `releases/rhine-music-local-mod/v0.4.1-local.1/`（**515.5 MB**，18.3s，MD5 源 vs 包内**全部一致**）；脚本闭包 8 个（含 `qq-credits.mjs`/`local-music-credits.mjs`/`music-audio.mjs`/`lyrics.mjs`/`album-online.mjs`）、`node_modules` 15 包 6.74MB。**包内冒烟通过**：`runtime/node.exe` 起 `music-server.mjs` 返回真实曲库（音乐目录 `C:\Users\<用户名>\Music\Music`）。新增 `docs/发布说明-v0.4.1-local.1.md`。**上传待办**：按 §5 两道硬约束剥离私人数据后推 Release（tag `v0.4.1-local.1`，标 Pre-release） | 用户要求"测试没问题后上传"——先把可双击验收的包做出来，上传等真机确认 |
 | 2026-10-09 | **第四轮·阶段三~五（继续接线，已提交）**：①总览缩略图模式（markup + MusicOverviewUI + setOverview/updateOverview + V 快捷键 + inert 联动 + overviewLane 展开 / overviewEnterLane 进入）；②光照/动效实验室（developerMode/motionDebug/motionSpeed/lighting 偏好 + `--music-motion-scale` + `setupMotionLab`/`setupLightingLab` + 设置面板「开发者调试模式」）；③歌曲衔接三模式（player 新增 `songTransition`/`setSongTransitionMode`，控件沿用 id `song-fade-setting`，旧 `songFade` 键退休）；④真实列独立浏览完整逻辑（`syncAlbumNavigation`/`resolveColumnSelection`/mode 感知 `stepAlbum`/总览折叠 `stepGenre`/列记忆守卫）；⑤cover-atlas 浮点内缩夹取 + 图集各向异性对齐 1。**验证：tsc 0；`vite build` 126 模块 0；19/21 个非联网检查通过**（`check-music-player` 4/4）。3 项未过均为**上游检查夹具与本地实现不兼容**，非缺陷：`check-music-song-transition-ui`/`check-music-column-position`（上游夹具未定义本地 settings 面板的 `lyricsMarkup`）、`check-music-cover`（上游断言图集着色器 `vCoverTile` 夹取，本地图集用透明边距方案，属"本地为尊"）。**待续**：QQ 制作名单客户端接线、浏览器侧 gapless、帧时序（MusicFrameTiming）、打包 `v0.4.1-local.1` 并上传、任务 2 Android | 分期推进，每阶段 tsc+build+检查验证；剩余项按"本地为尊 + 保持 libmpv"原则显式登记 |
+| 2026-10-09 | **第四轮·上传 GitHub（已完成）**：①`ls-remote` 预检确认远端 `main`=`0d08d7a`、`rhine-music-local-mod`=`c8d28b6`，本地 ahead 9 且可**快进**（无强推）；②推送 9 个提交到 `rhine-music-local-mod`（`c8d28b6..604dd21`，92 文件 / +10777 行），核对远端哈希 == 本地 HEAD，`main` 未触碰；③用 Python `zipfile` 生成**公开版 ZIP**（`make-public-zip.py`：剔除 `webview2/`、`library-index.json`、`artwork/`，`config.json` 的 `roots` 置空；2881 项 / 509.8MB → 231.3MB，剥离残留 0 项）；④GCM 凭据直调 API 创建 Release `v0.4.1-local.1`（id `407958736`，`target_commitish=rhine-music-local-mod`，**Pre-release**）+ 上传附件（asset `625102430`，`state=uploaded`，字节数相符）；⑤收尾删除含凭据的头部文件与 API 中转目录 | 用户验收通过后要求上传；全程未强推、未索要 token、token 未进命令行/输出 |
