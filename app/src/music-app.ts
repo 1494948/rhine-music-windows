@@ -101,6 +101,7 @@ import {
   onMusicMotionSpeedChange,
   setMusicMotionSpeed,
 } from "./music-motion-settings";
+import { normalizeSongTransition, type SongTransitionMode } from "./music-song-transition";
 
 type Theme = "day" | "night";
 type Panel = "library" | "search" | "settings" | null;
@@ -143,6 +144,8 @@ const preferences = {
     reduced: false,
     volume: 0.65,
     songFade: true,
+    // 留空直到读取旧偏好：默认值会盖掉用户此前的"关闭淡入淡出"选择。
+    songTransition: undefined as SongTransitionMode | undefined,
     bgm: true,
     bgmVolume: 0.45,
     sound: true,
@@ -166,6 +169,7 @@ const preferences = {
       reduced: boolean;
       volume: number;
       songFade: boolean;
+      songTransition: SongTransitionMode;
       bgm: boolean;
       bgmVolume: number;
       sound: boolean;
@@ -229,6 +233,7 @@ preferences.developerMode = preferences.developerMode === true;
 preferences.motionDebug = preferences.motionDebug === true;
 preferences.motionSpeed = normalizeMusicMotionSpeed(preferences.motionSpeed);
 setMusicMotionSpeed(preferences.motionSpeed);
+preferences.songTransition = normalizeSongTransition(preferences.songTransition, preferences.songFade);
 const syncMotionScale = () => document.documentElement.style.setProperty("--music-motion-scale", String(1 / getMusicMotionSpeed()));
 syncMotionScale();
 onMusicMotionSpeedChange(syncMotionScale);
@@ -300,6 +305,7 @@ let playerState: MusicPlayerState;
 const player = new MusicPlayer({
   volume: preferences.volume,
   songFadeEnabled: preferences.songFade,
+  songTransitionMode: preferences.songTransition,
   bgmEnabled: preferences.bgm,
   bgmVolume: preferences.bgmVolume,
 });
@@ -1902,7 +1908,7 @@ function renderSettingsPanel() {
     <section class="panel-section" id="introduction-settings"><h3>专辑介绍</h3><p>从公开百科查询并更新专辑介绍，附上资料来源。介绍保存在本机，不需要配置 MusicBrainz 联系信息；音乐文件不会上传。</p><p id="introduction-coverage"></p><button class="primary-button" id="introduction-refresh" data-action="introductions-library">查询 / 更新专辑介绍 ↗</button><progress id="introduction-progress" aria-label="专辑介绍查询进度" max="1" value="0" hidden></progress><p id="introduction-status" class="scan-status" role="status" aria-live="polite"></p><details id="introduction-missing" hidden><summary></summary><ul></ul></details></section>
     ${qualityMarkup(renderQuality)}
     <section class="panel-section"><h3>动效与显示</h3><label class="settings-row"><span>减少动态效果<small>简化镜头、文字加载和页签过渡</small></span><input type="checkbox" id="reduced-motion" ${preferences.reduced ? "checked" : ""}></label><label class="settings-row"><span>空闲时停止绘制<small>2 分钟无操作后暂停三维渲染，移动鼠标或按键立即恢复；省电与降低风扇转速</small></span><input type="checkbox" id="idle-stop" ${preferences.idleStop ? "checked" : ""}></label><label class="settings-row"><span>玻璃雾度<small>100% 为原始质感；调高更朦胧，调低更通透。只影响玻璃外壳</small></span><span class="settings-slider"><input type="range" id="glass-frost" aria-label="玻璃雾度" min="0" max="200" step="5" value="${preferences.glassFrost}"><output id="glass-frost-output">${preferences.glassFrost}%</output></span></label><label class="settings-row"><span>锐化强度<small>0% 关闭。三维画面按较低分辨率渲染再放大，锐化找回局部对比；只作用于三维场景</small></span><span class="settings-slider"><input type="range" id="sharpen" aria-label="锐化强度" min="0" max="100" step="5" value="${preferences.sharpen}"><output id="sharpen-output">${preferences.sharpen}%</output></span></label><button class="text-button" data-action="fullscreen">切换全屏 ↗</button></section>
-    <section class="panel-section"><h3>声音</h3><label class="settings-row"><span>歌曲音量</span><input type="range" id="volume" aria-label="歌曲音量" min="0" max="100" value="${Math.round(preferences.volume * 100)}"></label><label class="settings-row"><span>切歌淡入淡出<small>当前歌曲先淡出，再淡入下一首</small></span><input type="checkbox" id="song-fade-setting" ${preferences.songFade ? "checked" : ""}></label><label class="settings-row"><span>界面音效<small>玻璃卡片与终端操作</small></span><input type="checkbox" id="sound-setting" ${preferences.sound ? "checked" : ""}></label><label class="settings-row"><span>音效音量</span><input type="range" id="sound-volume" aria-label="音效音量" min="0" max="100" value="${Math.round(preferences.soundVolume * 100)}"></label><label class="settings-row"><span>氛围 BGM<small>专辑开始前淡出，停止后淡入</small></span><input type="checkbox" id="bgm-setting" ${preferences.bgm ? "checked" : ""}></label><label class="settings-row"><span>BGM 音量</span><input type="range" id="bgm-volume" aria-label="BGM 音量" min="0" max="100" value="${Math.round(preferences.bgmVolume * 100)}"></label><button class="text-button" data-action="sound-preview">试听界面音效 ↗</button></section>
+    <section class="panel-section"><h3>声音</h3><label class="settings-row"><span>歌曲音量</span><input type="range" id="volume" aria-label="歌曲音量" min="0" max="100" value="${Math.round(preferences.volume * 100)}"></label><label class="settings-row"><span>歌曲衔接<small>选择切换歌曲时的音量过渡</small></span><select id="song-transition-setting" aria-label="歌曲衔接方式"><option value="fade-out" ${preferences.songTransition === "fade-out" ? "selected" : ""}>淡出但不淡入</option><option value="fade-in-out" ${preferences.songTransition === "fade-in-out" ? "selected" : ""}>淡出淡入</option><option value="gapless" ${preferences.songTransition === "gapless" ? "selected" : ""}>无缝播放</option></select></label><label class="settings-row"><span>界面音效<small>玻璃卡片与终端操作</small></span><input type="checkbox" id="sound-setting" ${preferences.sound ? "checked" : ""}></label><label class="settings-row"><span>音效音量</span><input type="range" id="sound-volume" aria-label="音效音量" min="0" max="100" value="${Math.round(preferences.soundVolume * 100)}"></label><label class="settings-row"><span>氛围 BGM<small>专辑开始前淡出，停止后淡入</small></span><input type="checkbox" id="bgm-setting" ${preferences.bgm ? "checked" : ""}></label><label class="settings-row"><span>BGM 音量</span><input type="range" id="bgm-volume" aria-label="BGM 音量" min="0" max="100" value="${Math.round(preferences.bgmVolume * 100)}"></label><button class="text-button" data-action="sound-preview">试听界面音效 ↗</button></section>
     ${lyricsMarkup(lyricSettings, previewTracks())}
     ${nativeKernelMarkup()}
     <section class="panel-section"><h3>开发与资源</h3><p>音乐适配与维护：<a href="https://github.com/RonaldDeng/Rhine-Music-Demo" target="_blank" rel="noopener">RonaldDeng ↗</a><br>原版界面：<a href="https://github.com/LBEILC/RhineLabUI" target="_blank" rel="noopener">LBEILC / RhineLabUI ↗</a></p><p><a href="/licenses/project-mit.txt" target="_blank" rel="noopener">代码 MIT 许可 ↗</a> · <a href="https://github.com/RonaldDeng/Rhine-Music-Demo/blob/v0.2.0/NOTICE.md" target="_blank" rel="noopener">版权与资源说明 ↗</a></p><a href="/?original=1&scene=archive" target="_blank" rel="noopener">打开原版档案界面 ↗</a><p><a href="/fonts/MiSans-license.pdf" target="_blank" rel="noopener">MiSans 字体许可 ↗</a></p></section>`;
@@ -2407,9 +2413,9 @@ document.addEventListener("change", (e) => {
       void getNativePlayback().bgm("sfx-enabled", undefined, el.checked);
     savePrefs();
   }
-  if (el.id === "song-fade-setting") {
-    preferences.songFade = el.checked;
-    player.setSongFadeEnabled(el.checked);
+  if (el.id === "song-transition-setting") {
+    preferences.songTransition = normalizeSongTransition(el.value, preferences.songFade);
+    player.setSongTransitionMode(preferences.songTransition);
     savePrefs();
   }
   if (el.id === "reduced-motion") {

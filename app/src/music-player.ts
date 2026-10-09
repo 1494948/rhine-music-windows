@@ -4,6 +4,10 @@ import {
   resolveTrackUrl,
   type NativePlaybackClient,
 } from "./native-playback.ts";
+import {
+  normalizeSongTransition,
+  type SongTransitionMode,
+} from "./music-song-transition.ts";
 
 export interface MusicPlayerState {
   transport: "idle" | "loading" | "playing" | "paused" | "error";
@@ -16,6 +20,8 @@ export interface MusicPlayerState {
   currentTime: number;
   volume: number;
   songFadeEnabled: boolean;
+  /** v0.4.1 衔接方式：淡出不淡入 / 淡出淡入 / 无缝。 */
+  songTransition: SongTransitionMode;
   bgmVolume: number;
   bgmEnabled: boolean;
   bgmPlaying: boolean;
@@ -67,6 +73,7 @@ export class MusicPlayer {
     options: {
       volume?: number;
       songFadeEnabled?: boolean;
+      songTransitionMode?: SongTransitionMode;
       bgmVolume?: number;
       bgmEnabled?: boolean;
     } = {},
@@ -81,6 +88,10 @@ export class MusicPlayer {
       currentTime: 0,
       volume: Number.isFinite(options.volume) ? unit(options.volume!) : 0.7,
       songFadeEnabled: options.songFadeEnabled ?? true,
+      songTransition: normalizeSongTransition(
+        options.songTransitionMode,
+        options.songFadeEnabled,
+      ),
       bgmVolume: Number.isFinite(options.bgmVolume)
         ? unit(options.bgmVolume!)
         : 0.18,
@@ -183,7 +194,7 @@ export class MusicPlayer {
         outgoing &&
         !outgoing.paused &&
         !outgoing.ended &&
-        this.value.songFadeEnabled
+        this.value.songTransition !== "gapless"
       ) {
         await this.fadeSong(outgoing, 0);
         if (request !== this.operation || this.disposed) return;
@@ -210,7 +221,7 @@ export class MusicPlayer {
         this.emit();
         if (request !== this.operation || this.disposed || this.song !== audio)
           return;
-        if (this.value.songFadeEnabled) await this.fadeSong(audio, 1);
+        if (this.value.songTransition === "fade-in-out") await this.fadeSong(audio, 1);
         else this.setSongGain(1);
       }
     } catch (error) {
@@ -441,6 +452,21 @@ export class MusicPlayer {
     this.emit();
   }
 
+  /** v0.4.1 三种衔接方式；与旧开关互通（关=无缝）。 */
+  setSongTransitionMode(mode: SongTransitionMode): void {
+    if (this.disposed) return;
+    this.value.songTransition = normalizeSongTransition(
+      mode,
+      this.value.songFadeEnabled,
+    );
+    this.value.songFadeEnabled = this.value.songTransition !== "gapless";
+    if (this.value.songTransition === "gapless") {
+      this.cancelSongFade();
+      if (this.songTrackId === this.value.currentTrack?.id) this.setSongGain(1);
+    }
+    this.emit();
+  }
+
   setBgmVolume(volume: number): void {
     if (this.disposed || !Number.isFinite(volume)) return;
     this.value.bgmVolume = unit(volume);
@@ -488,7 +514,7 @@ export class MusicPlayer {
     const audio = new Audio();
     this.song = audio;
     this.songTrackId = track.id;
-    this.songGain = this.value.songFadeEnabled ? 0 : 1;
+    this.songGain = this.value.songTransition === "fade-in-out" ? 0 : 1;
     audio.preload = "metadata";
     this.setSongGain(this.songGain);
     const active = () =>
