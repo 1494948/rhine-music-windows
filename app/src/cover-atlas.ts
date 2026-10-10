@@ -10,6 +10,17 @@ export const COVER_SIZE = MUSIC_COVER;
 type CoverImage = { source: HTMLCanvasElement | ImageBitmap | HTMLImageElement; width: number; height: number };
 export const COVER_PAINT_SIZE = 1024;
 /**
+ * The detail view's own logical size, deliberately larger than the atlas tiers.
+ *
+ * The shelf only ever needs a tile; the opened card is the one place a cover is
+ * shown big, and at 1024 it was being magnified by the scene — the "not sharp
+ * enough" report. 1536 is 1.5× the linear resolution for 2.25× the pixels, so
+ * the selected texture grows from ~4 MB to ~9 MB while the atlas and its upload
+ * path stay exactly as they were. Genre switching never touches this tier, which
+ * is why raising it costs nothing there.
+ */
+export const DETAIL_PAINT_SIZE = 1536;
+/**
  * The detail canvas is COVER_PAINT_SIZE. Tiles are `tileWidth` — 256 in
  * practice, and never more than a quarter of this — so one decoded thumbnail
  * cannot serve both.
@@ -22,7 +33,7 @@ export const COVER_PAINT_SIZE = 1024;
  * thumbnail sized to its own tile, and the full-size decode is paid once, for
  * the album the user actually opened.
  */
-const DETAIL_THUMBNAIL = COVER_PAINT_SIZE;
+const DETAIL_THUMBNAIL = DETAIL_PAINT_SIZE;
 /**
  * Cache bounds, counted in decoded RGBA bytes rather than entries.
  *
@@ -33,11 +44,12 @@ const DETAIL_THUMBNAIL = COVER_PAINT_SIZE;
  * 79-album library now fits with room to spare instead of sitting at the limit.
  */
 const TILE_CACHE_BYTES = 48 * 1024 * 1024;
-const DETAIL_CACHE_BYTES = 40 * 1024 * 1024;
+// Raised with the detail tier: the same entry count is kept at 1536, so
+// stepping through an album still hits the cache instead of re-decoding.
+const DETAIL_CACHE_BYTES = 64 * 1024 * 1024;
 // Use the same UV margin at every texture resolution. A fixed two-pixel inset
 // made the 256px atlas artwork smaller than its 1024px lifted/returning copy.
 export const COVER_INSET = 1 / 128;
-const COVER_PAINT_MARGIN = COVER_PAINT_SIZE * COVER_INSET;
 
 export function containCover(
   width: number,
@@ -146,13 +158,17 @@ export function paintCover(
   canvas: HTMLCanvasElement,
   record: Pick<ArchiveRecord, "title"> | undefined,
   image?: CoverImage,
+  // The detail card paints at a larger logical size; every other owner keeps the
+  // atlas size. The canvas transform below absorbs the difference, so the art,
+  // its UV margin and the label metrics stay proportional at both sizes.
+  logicalSize: number = COVER_PAINT_SIZE,
 ) {
   const context = canvas.getContext("2d")!;
   // Paint in one logical coordinate space, including fallback art and labels.
   // Ownership can move between atlas/selection/snapshot without rescaling art.
-  const width = COVER_PAINT_SIZE,
-    height = COVER_PAINT_SIZE,
-    margin = COVER_PAINT_MARGIN;
+  const width = logicalSize,
+    height = logicalSize,
+    margin = logicalSize * COVER_INSET;
   context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
   context.clearRect(0, 0, width, height);
   if (image) {
@@ -386,8 +402,8 @@ export class CoverAtlas {
     this.atlasCanvas.height = this.rows * this.tileHeight;
     this.tileCanvas.width = this.tileWidth;
     this.tileCanvas.height = this.tileHeight;
-    this.selectedCanvas.width = COVER_PAINT_SIZE;
-    this.selectedCanvas.height = COVER_PAINT_SIZE;
+    this.selectedCanvas.width = DETAIL_PAINT_SIZE;
+    this.selectedCanvas.height = DETAIL_PAINT_SIZE;
     this.slotKeys = Array(count);
     this.tileKeys = Array(this.tileCount);
     this.tileRefs = new Int32Array(this.tileCount);
@@ -851,13 +867,13 @@ export class CoverAtlas {
     const ready = url ? this.details.peek(url) : undefined;
     if (ready) {
       this.cancelPendingDetail();
-      paintCover(this.selectedCanvas, record, ready);
+      paintCover(this.selectedCanvas, record, ready, DETAIL_PAINT_SIZE);
       this.selectedTexture.needsUpdate = true;
       return;
     }
     // The placeholder goes up straight away, so the switch itself never waits
     // on a decode — the real cover replaces it whenever it lands.
-    paintCover(this.selectedCanvas, record);
+    paintCover(this.selectedCanvas, record, undefined, DETAIL_PAINT_SIZE);
     this.selectedTexture.needsUpdate = true;
     await this.queueDetail(record);
   }
@@ -912,7 +928,7 @@ export class CoverAtlas {
           request.resolve();
           continue;
         }
-        paintCover(this.selectedCanvas, request.record, image);
+        paintCover(this.selectedCanvas, request.record, image, DETAIL_PAINT_SIZE);
         this.selectedTexture.needsUpdate = true;
         request.resolve();
       }

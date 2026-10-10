@@ -12,6 +12,36 @@
 .overview-heading small { font-size: 9px; letter-spacing: .23em; color: var(--muted); }
 .overview-heading h2 { font-size: 19px; font-weight: 400; margin: 9px 0; letter-spacing: .12em; }
 .overview-heading p { font-size: 11px; color: var(--muted); }
+/* 标题区下方：当前流派里的全部专辑名。
+   两列 + 限高 + 底部遮罩淡出 —— 总览里的滚轮已经被"切换流派"占用，
+   这里不能自己滚动。整块的淡出/淡入由 MusicOverviewUI 负责。 */
+.overview-albums { margin-top: 15px; max-width: 306px; }
+.overview-albums-caption {
+  display: block;
+  margin-bottom: 7px;
+  font-size: 9px;
+  letter-spacing: .18em;
+  color: var(--accent);
+}
+.overview-albums-list {
+  column-count: 2;
+  column-gap: 20px;
+  max-height: 208px;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 70%, transparent);
+  mask-image: linear-gradient(to bottom, #000 70%, transparent);
+}
+.overview-albums-list span {
+  display: block;
+  font-size: 10.5px;
+  line-height: 1.72;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 当前选中/正在播放的那张提亮，和列名卡片的 aria-current 是同一套强调逻辑。 */
+.overview-albums-list span[data-current="true"] { color: var(--ink); }
 .overview-columns { position: absolute; inset: 0; }
 .overview-anchor { --overview-label-width: 160px; position: absolute; width: var(--overview-label-width); transform: translate(-50%, -100%); }
 .overview-column {
@@ -63,6 +93,9 @@
   .overview-return { left: 22px; bottom: 50px; }
   .overview-heading { left: 22px; top: 115px; }
   .overview-heading h2 { font-size: 17px; }
+  .overview-albums { max-width: 176px; margin-top: 11px; }
+  .overview-albums-list { column-count: 1; max-height: 132px; }
+  .overview-albums-list span { font-size: 10px; }
   .overview-anchor { --overview-label-width: 116px; }
   .overview-column-label { padding: 8px; }
   .overview-column strong { font-size: 11px; }

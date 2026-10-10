@@ -1942,7 +1942,41 @@
   opacity: 1;
   transform: scale(1);
 }
+/* 专辑内播放方式：顺序 / 随机 / 单曲循环三态共用一个按钮，切换只换字形。
+   动画与 play-pause 同一套参数（180ms、scale(.7→1)），所以状态变化看起来是
+   同一个语言，且按钮本身尺寸不变、不会挤动左边的歌名与进度条。 */
+#play-mode {
+  position: relative;
+}
+#play-mode .mode-glyph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  opacity: 0;
+  transform: scale(0.7);
+  transition:
+    opacity calc(180ms * var(--music-motion-scale, 1)) ease,
+    transform calc(180ms * var(--music-motion-scale, 1)) ease;
+}
+#play-mode[data-mode="sequential"] .mode-glyph[data-play-mode="sequential"],
+#play-mode[data-mode="shuffle"] .mode-glyph[data-play-mode="shuffle"],
+#play-mode[data-mode="repeat-one"] .mode-glyph[data-play-mode="repeat-one"] {
+  opacity: 1;
+  transform: scale(1);
+}
+/* 离开顺序播放就常亮强调色，不必点开也能看出当前不是默认方式。 */
+#play-mode[data-mode="shuffle"],
+#play-mode[data-mode="repeat-one"] {
+  color: var(--accent);
+  opacity: 0.95;
+}
 .music-app.reduce-motion #play-pause .transport-glyph {
+  transition: none;
+}
+.music-app.reduce-motion #play-mode .mode-glyph {
   transition: none;
 }
 .music-app .document-redaction-ink {

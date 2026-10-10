@@ -31,7 +31,13 @@ import {
   type QualityPreset,
   type RenderQuality,
 } from "./render-quality";
-import { MusicPlayer, type MusicPlayerState } from "./music-player";
+import {
+  MusicPlayer,
+  normalizePlayMode,
+  PLAY_MODES,
+  type MusicPlayerState,
+  type PlayMode,
+} from "./music-player";
 import {
   getNativePlayback,
   loadNativeKernelPrefs,
@@ -92,6 +98,7 @@ import { normalizeMusicArrayMode, type MusicArrayMode } from "./music-array-layo
 import { mountMusicWheelNavigation } from "./music-wheel-navigation";
 import "./music-overview.css";
 import { MusicOverviewUI } from "./music-overview-ui";
+import type { OverviewColumn } from "./music-overview";
 import { setupMotionLab } from "./music-motion-lab";
 import { setupLightingLab } from "./music-lighting-lab";
 import type { LightingLabController, LightingLabSettings } from "./music-lighting-lab";
@@ -120,6 +127,21 @@ const icons = {
     '<path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5" fill="var(--surface)"/><circle cx="15" cy="17" r="2.5" fill="var(--surface)"/>',
   ),
   folder: svg('<path d="M3 7V5h6l2 2h10v13H3Z"/>'),
+  // 专辑内播放方式：三种形态共用一个按钮，切换时只换字形。
+  modeSequential: svg(
+    '<path d="M4 6h10M4 12h10M4 18h10"/><path d="m17 9 3 3-3 3"/>',
+  ),
+  modeShuffle: svg(
+    '<path d="M4 7h4l8 10h4"/><path d="M4 17h4l8-10h4"/><path d="m17 4 3 3-3 3"/><path d="m17 14 3 3-3 3"/>',
+  ),
+  modeRepeatOne: svg(
+    '<path d="M5 10V8a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/><path d="M19 14v2a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2v-2"/><path d="M11.2 10.4 13 9.2v5.6"/>',
+  ),
+};
+const playModeNames: Record<PlayMode, string> = {
+  sequential: "顺序播放",
+  shuffle: "随机播放",
+  "repeat-one": "单曲循环",
 };
 const read = <T>(key: string, fallback: T): T => {
   try {
@@ -145,6 +167,7 @@ const preferences = {
     volume: 0.65,
     // 留空直到读取旧偏好：默认值会盖掉用户此前的"关闭淡入淡出"选择。
     songTransition: undefined as SongTransitionMode | undefined,
+    playMode: "sequential" as PlayMode,
     bgm: true,
     bgmVolume: 0.45,
     sound: true,
@@ -169,6 +192,7 @@ const preferences = {
       volume: number;
       songFade: boolean;
       songTransition: SongTransitionMode;
+      playMode: PlayMode;
       bgm: boolean;
       bgmVolume: number;
       sound: boolean;
@@ -234,6 +258,7 @@ preferences.motionSpeed = normalizeMusicMotionSpeed(preferences.motionSpeed);
 setMusicMotionSpeed(preferences.motionSpeed);
 preferences.songTransition = normalizeSongTransition(preferences.songTransition, preferences.songFade);
 delete preferences.songFade;
+preferences.playMode = normalizePlayMode(preferences.playMode);
 const syncMotionScale = () => document.documentElement.style.setProperty("--music-motion-scale", String(1 / getMusicMotionSpeed()));
 syncMotionScale();
 onMusicMotionSpeedChange(syncMotionScale);
@@ -305,6 +330,7 @@ let playerState: MusicPlayerState;
 const player = new MusicPlayer({
   volume: preferences.volume,
   songTransitionMode: preferences.songTransition,
+  playMode: preferences.playMode,
   bgmEnabled: preferences.bgm,
   bgmVolume: preferences.bgmVolume,
 });
@@ -350,13 +376,13 @@ stage.innerHTML = `
             <span id="transport-time">0:00 / 0:00</span>
           </div>
         </div>
-        <button data-action="play-pause" id="play-pause" aria-label="播放" aria-pressed="false"><span class="transport-glyph transport-play" aria-hidden="true">${icons.play}</span><span class="transport-glyph transport-pause" aria-hidden="true">${icons.pause}</span></button><button data-action="stop" id="stop-playback" aria-label="停止">${icons.stop}</button></div>
+        <button data-action="play-pause" id="play-pause" aria-label="播放" aria-pressed="false"><span class="transport-glyph transport-play" aria-hidden="true">${icons.play}</span><span class="transport-glyph transport-pause" aria-hidden="true">${icons.pause}</span></button><button data-action="stop" id="stop-playback" aria-label="停止">${icons.stop}</button><button type="button" data-action="play-mode" id="play-mode" data-mode="sequential" aria-label="播放方式：顺序播放" title="专辑内播放方式：顺序播放"><span class="mode-glyph" data-play-mode="sequential" aria-hidden="true">${icons.modeSequential}</span><span class="mode-glyph" data-play-mode="shuffle" aria-hidden="true">${icons.modeShuffle}</span><span class="mode-glyph" data-play-mode="repeat-one" aria-hidden="true">${icons.modeRepeatOne}</span></button></div>
     </nav>
   </header>
   <div id="library-status" class="library-status"><i></i><span>正在读取本地音乐索引</span></div>
   <button type="button" class="music-view-toggle" disabled data-action="overview" aria-pressed="false" aria-label="切换缩略图模式">${svg('<rect x="3" y="3" width="6" height="7"/><rect x="15" y="3" width="6" height="7"/><rect x="3" y="14" width="6" height="7"/><rect x="15" y="14" width="6" height="7"/>')}<span>缩略图模式</span><kbd>V</kbd></button>
   <section class="music-overview" id="music-overview" aria-label="音乐库缩略图总览" hidden>
-    <div class="overview-heading"><small>COLLECTION / OVERVIEW</small><h2>${sortLabel.name}浏览收藏</h2><p>点击列名展开入口 · 点击进入回到标准视图</p></div>
+    <div class="overview-heading"><small>COLLECTION / OVERVIEW</small><h2>${sortLabel.name}浏览收藏</h2><p>点击列名展开入口 · 点击进入回到标准视图</p><div class="overview-albums" id="overview-albums" hidden><small class="overview-albums-caption"></small><div class="overview-albums-list"></div></div></div>
     <div class="overview-columns" id="overview-columns"></div>
     <button type="button" class="overview-return" data-action="overview-return" aria-label="返回标准视图">${svg('<path d="M15 5l-7 7 7 7"/>')}<span>返回近景</span><kbd>V</kbd></button>
     <nav class="overview-controls" aria-label="总览列导航"><button data-action="genre-prev" aria-label="总览上一列">←</button><span>← → 切换${sortLabel.column}</span><button data-action="genre-next" aria-label="总览下一列">→</button></nav>
@@ -511,8 +537,28 @@ function setOverview(active: boolean, reveal = true) {
 }
 function updateOverview() {
   if (!scene || (!overview && $("#music-overview").hidden)) return;
-  overviewUI.update(scene.getOverviewColumns(), stage.clientWidth, stage.clientHeight,
+  const columns = scene.getOverviewColumns();
+  syncOverviewAlbumList(columns);
+  overviewUI.update(columns, stage.clientWidth, stage.clientHeight,
     scene.musicOverviewProgress, preferences.reduced, sortLabel.column);
+}
+/**
+ * 标题区下方那份名单只在"当前列或选中专辑"变化时重算。
+ *
+ * 每帧都拼一遍 46 个专辑名会白白产生几十个字符串；更关键的是，界面需要的是
+ * "变了才换"，否则淡出淡入会被每帧重触发。
+ */
+let overviewAlbumKey = "";
+function syncOverviewAlbumList(columns: OverviewColumn[]) {
+  const current = columns.find((column) => column.selected);
+  const lane = current?.lane ?? -1;
+  const selectedTitle = records[selected]?.title ?? "";
+  const key = `${lane}\u0000${selectedTitle}`;
+  if (key === overviewAlbumKey) return;
+  overviewAlbumKey = key;
+  const names = lane < 0 ? [] : columnFiles(lane).map((index) => records[index]?.title ?? "");
+  overviewUI.setAlbums(preferences.reduced,
+    current ? `${current.name} · ${names.length} 张` : "", names, selectedTitle);
 }
 let motionControls: ReturnType<typeof setupMotionLab> | undefined;
 let lightingControls: LightingLabController | undefined;
@@ -1710,8 +1756,26 @@ transportSeek.addEventListener("input", () => {
     transportTime.textContent = `${time(preview)} / ${time(duration)}`;
   }
 });
+/** 播放方式按钮：三种形态共用一个按钮，切换时只换字形，不改变布局。 */
+function syncPlayModeButton(mode: PlayMode) {
+  const button = document.querySelector<HTMLButtonElement>("#play-mode");
+  if (!button) return;
+  button.dataset.mode = mode;
+  const name = playModeNames[mode];
+  button.setAttribute("aria-label", `播放方式：${name}`);
+  button.title = `专辑内播放方式：${name}`;
+}
+function cyclePlayMode() {
+  const next = PLAY_MODES[(PLAY_MODES.indexOf(playerState.playMode) + 1) % PLAY_MODES.length];
+  player.setPlayMode(next);
+  preferences.playMode = next;
+  savePrefs();
+  syncPlayModeButton(next);
+  notify(`专辑内播放方式：${playModeNames[next]}`);
+}
 player.subscribe((state) => {
   playerState = state;
+  syncPlayModeButton(state.playMode);
   const titleVisible = !!state.currentTrack &&
     (state.transport === "playing" || state.transport === "paused" || state.transport === "loading");
   transportTitleMotion.update(state.currentTrack?.title ?? "", titleVisible);
@@ -2134,6 +2198,9 @@ document.addEventListener("click", (e) => {
     return;
   }
   switch (action) {
+    case "play-mode":
+      cyclePlayMode();
+      break;
     case "overview-return":
       setOverview(false);
       break;

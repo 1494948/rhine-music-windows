@@ -1,3 +1,4 @@
+import { escapeHtml } from "./html";
 import { visibleOverviewLabels, type OverviewColumn } from "./music-overview";
 import { SurfaceTransition } from "./ui-transitions";
 
@@ -18,6 +19,14 @@ export class MusicOverviewUI {
   private chromeShown = false;
   private revision = 0;
   private expandedLane: number | null = null;
+  /** 标题区下方那份"当前流派全部专辑名"的宿主；标记缺失时整体降级为不显示。 */
+  private albumsBlock: HTMLElement | null = null;
+  private albumsCaption: HTMLElement | null = null;
+  private albumsList: HTMLElement | null = null;
+  private albumsTransition?: SurfaceTransition;
+  private albumsKey = "";
+  private albumsVisible = false;
+  private albumsPending: { caption: string; names: string[]; current: string } | null = null;
 
   constructor(private surface: HTMLElement, private container: HTMLElement,
     private returnFocus: () => void) {
@@ -28,6 +37,60 @@ export class MusicOverviewUI {
       return new SurfaceTransition(element, element, 460, 240, "up",
         "cubic-bezier(0.4, 0, 0.2, 1)");
     });
+    const block = surface.querySelector<HTMLElement>(".overview-albums");
+    if (block) {
+      this.albumsBlock = block;
+      this.albumsCaption = block.querySelector<HTMLElement>(".overview-albums-caption");
+      this.albumsList = block.querySelector<HTMLElement>(".overview-albums-list");
+      // 与标题、控件用同一套进出参数（460/240 · 上移 · cubic-bezier(.4,0,.2,1)），
+      // 这样"换流派"看起来和总览自身进出是同一个语言。
+      this.albumsTransition = new SurfaceTransition(block, block, 460, 240, "up",
+        "cubic-bezier(0.4, 0, 0.2, 1)");
+      block.hidden = true;
+    }
+  }
+
+  /**
+   * 换流派时替换标题区下方的专辑名单。
+   *
+   * 先淡出、再换内容、后淡入 —— 不做"原地改字"，否则长名单会在同一帧里跳成
+   * 另一份名单，看起来像闪烁。过渡中再次换列只会重跑这一条路径，
+   * SurfaceTransition 会按剩余距离缩短时长。
+   */
+  setAlbums(reduced: boolean, caption: string, names: readonly string[], current: string) {
+    const key = `${caption}\u0000${current}\u0000${names.join("\u0001")}`;
+    if (key === this.albumsKey) return;
+    this.albumsKey = key;
+    if (!this.albumsBlock || !this.albumsTransition) return;
+    this.albumsPending = { caption, names: [...names], current };
+    if (!this.albumsVisible) {
+      this.commitAlbums(reduced);
+      return;
+    }
+    this.albumsTransition.hide(reduced, () => {
+      if (this.albumsPending) this.commitAlbums(reduced);
+    });
+  }
+
+  private commitAlbums(reduced: boolean) {
+    const pending = this.albumsPending;
+    if (!pending || !this.albumsBlock || !this.albumsTransition) return;
+    this.albumsPending = null;
+    if (!pending.names.length) {
+      // 当前流派没有可用专辑：退场后整体收起，不留一个空框占位。
+      this.albumsVisible = false;
+      this.albumsTransition.hide(reduced, () => {
+        if (this.albumsBlock) this.albumsBlock.hidden = true;
+      });
+      return;
+    }
+    if (this.albumsCaption) this.albumsCaption.textContent = pending.caption;
+    if (this.albumsList)
+      this.albumsList.innerHTML = pending.names
+        .map((name) => `<span${name === pending.current ? ' data-current="true"' : ""}>${escapeHtml(name)}</span>`)
+        .join("");
+    this.albumsVisible = true;
+    this.albumsTransition.show(reduced);
   }
 
   setActive(active: boolean, reduced: boolean) {
@@ -164,12 +227,14 @@ export class MusicOverviewUI {
 
   finish() {
     this.chrome.forEach((motion) => motion.finish());
+    this.albumsTransition?.finish();
     for (const item of this.labels.values()) item.transition.finish();
   }
 
   dispose() {
     this.revision++;
     this.chrome.forEach((motion) => motion.dispose());
+    this.albumsTransition?.dispose();
     for (const item of this.labels.values()) item.transition.dispose();
     this.labels.clear();
   }

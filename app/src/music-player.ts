@@ -9,6 +9,15 @@ import {
   type SongTransitionMode,
 } from "./music-song-transition.ts";
 
+/** 专辑内的播放方式：顺序 / 随机 / 单曲循环。 */
+export type PlayMode = "sequential" | "shuffle" | "repeat-one";
+
+export const PLAY_MODES: readonly PlayMode[] = ["sequential", "shuffle", "repeat-one"];
+
+export function normalizePlayMode(value: unknown): PlayMode {
+  return value === "shuffle" || value === "repeat-one" ? value : "sequential";
+}
+
 export interface MusicPlayerState {
   transport: "idle" | "loading" | "playing" | "paused" | "error";
   currentTrack: MusicTrack | null;
@@ -22,6 +31,8 @@ export interface MusicPlayerState {
   songFadeEnabled: boolean;
   /** v0.4.1 衔接方式：淡出不淡入 / 淡出淡入 / 无缝。 */
   songTransition: SongTransitionMode;
+  /** 专辑内播放方式；决定队列放到尽头之后往哪走。 */
+  playMode: PlayMode;
   bgmVolume: number;
   bgmEnabled: boolean;
   bgmPlaying: boolean;
@@ -74,6 +85,7 @@ export class MusicPlayer {
       volume?: number;
       songFadeEnabled?: boolean;
       songTransitionMode?: SongTransitionMode;
+      playMode?: PlayMode;
       bgmVolume?: number;
       bgmEnabled?: boolean;
     } = {},
@@ -92,6 +104,7 @@ export class MusicPlayer {
         options.songTransitionMode,
         options.songFadeEnabled,
       ),
+      playMode: normalizePlayMode(options.playMode),
       bgmVolume: Number.isFinite(options.bgmVolume)
         ? unit(options.bgmVolume!)
         : 0.18,
@@ -304,7 +317,7 @@ export class MusicPlayer {
         break;
       case "eof": {
         this.nativeActive = false;
-        const next = this.value.queue[this.value.currentIndex + 1];
+        const next = this.nextTrack();
         if (next) {
           void this.play(next.id);
         } else {
@@ -375,7 +388,7 @@ export class MusicPlayer {
 
   async next(): Promise<void> {
     if (this.disposed) return;
-    const track = this.value.queue[this.value.currentIndex + 1];
+    const track = this.nextTrack();
     if (track) await this.play(track.id);
     else this.stop();
   }
@@ -465,6 +478,36 @@ export class MusicPlayer {
       if (this.songTrackId === this.value.currentTrack?.id) this.setSongGain(1);
     }
     this.emit();
+  }
+
+  /**
+   * 专辑内播放方式。只影响"这一首放完之后往哪走"，不打断当前播放，也不改队列。
+   */
+  setPlayMode(mode: PlayMode): void {
+    if (this.disposed) return;
+    const next = normalizePlayMode(mode);
+    if (this.value.playMode === next) return;
+    this.value.playMode = next;
+    this.emit();
+  }
+
+  /**
+   * 队列的下一首，三种模式共用一个出口。
+   *
+   * 顺序：队尾返回 undefined（由调用方停播）；随机：队列里换一首，且不连着
+   * 重放同一首；单曲循环：返回当前这首，让调用方从头再放。
+   */
+  private nextTrack(): MusicTrack | undefined {
+    const queue = this.value.queue;
+    if (!queue.length) return undefined;
+    const index = this.value.currentIndex;
+    if (this.value.playMode === "repeat-one") return queue[index] ?? queue[0];
+    if (this.value.playMode === "shuffle" && queue.length > 1) {
+      let pick = index;
+      while (pick === index) pick = Math.floor(Math.random() * queue.length);
+      return queue[pick];
+    }
+    return queue[index + 1];
   }
 
   setBgmVolume(volume: number): void {
@@ -584,7 +627,7 @@ export class MusicPlayer {
       this.value.playing = false;
       this.value.loading = false;
       this.value.currentTime = this.value.duration;
-      const next = this.value.queue[this.value.currentIndex + 1];
+      const next = this.nextTrack();
       if (next) {
         // No idle intermediate state, so BGM never appears between songs.
         void this.play(next.id);
