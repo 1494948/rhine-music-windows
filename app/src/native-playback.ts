@@ -62,6 +62,9 @@ export class NativePlaybackClient {
   private bound = false;
   private controlBase: string | null = null;
   private lastError = "";
+  /** Fires once, the first time a transport is discovered after construction. */
+  private announced = false;
+  private readonly availableWaiters: Array<() => void> = [];
 
   constructor() {
     this.refresh();
@@ -89,6 +92,22 @@ export class NativePlaybackClient {
     return "none";
   }
 
+  /**
+   * Runs `listener` once, the first time a transport is discovered.
+   *
+   * The WebView2 shell injects `__rhinePlayerControl` asynchronously, so a
+   * module that reads `available` in its own constructor can miss the host
+   * entirely — and then never learn that it arrived. Anything that has to react
+   * to the kernel coming online registers here instead of polling `available`.
+   */
+  onAvailable(listener: () => void): void {
+    if (this.available) {
+      listener();
+      return;
+    }
+    this.availableWaiters.push(listener);
+  }
+
   private refresh(): boolean {
     const view = hostWindow();
     if (!view) return false;
@@ -109,7 +128,14 @@ export class NativePlaybackClient {
         // ignore
       }
     }
-    return !!(this.controlBase || this.host);
+    const present = !!(this.controlBase || this.host);
+    // A transport that appears late still has to be announced, or a client
+    // that was constructed first waits forever for a host that is already there.
+    if (present && !this.announced) {
+      this.announced = true;
+      for (const waiter of this.availableWaiters.splice(0)) waiter();
+    }
+    return present;
   }
 
   subscribe(listener: Listener): () => void {

@@ -154,9 +154,12 @@ export class LyricsPane {
   /**
    * One-shot warm-up: fetch, parse and mount. Repeat calls while a fetch is in
    * flight share the same promise, so a second pointerdown never doubles work.
+   *
+   * The track `setTrack` was given wins; `options.current()` is only the
+   * fallback for the very first warm-up, before any track has been named.
    */
   prepare(): Promise<void> {
-    const info = this.options.current();
+    const info = this.info ?? this.options.current();
     if (!info) return Promise.resolve();
     if (this.ready && this.info?.trackId === info.trackId) {
       this.syncCredit();
@@ -178,7 +181,16 @@ export class LyricsPane {
     }
     this.clear();
     this.info = info;
-    if (this.reveal > 0) void this.prepare();
+    // Load the track this call was handed, not one re-derived from
+    // `options.current()`. `prepare()` re-reads that callback, and the two reads
+    // can disagree: `currentAlbum()` is momentarily undefined while an album
+    // switches, and `lyricTarget` falls back to `tracks[0]` whenever the playing
+    // track is not found in the open album. Either way the pane would mount the
+    // first track's lyrics again — or, when the callback yields nothing, leave
+    // the pane empty with `info` already advanced, so the player subscription's
+    // "track changed" guard never fires again. Both read as "only the first
+    // song in the list has lyrics".
+    if (this.reveal > 0) void this.load(info);
     else this.syncCredit();
   }
 

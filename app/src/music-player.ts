@@ -115,9 +115,25 @@ export class MusicPlayer {
       backend: "browser",
     };
     this.native = getNativePlayback();
+    // Subscribe *before* the host exists, not after. The WebView2 shell
+    // injects `__rhinePlayerControl` asynchronously — routinely after this
+    // module is constructed — so subscribing only when `available` happens to
+    // be true at construction time wires up nothing, and every later event is
+    // dropped. `eof` is one of those: dropping it leaves a finished song
+    // sitting there instead of advancing to the next one, which is exactly the
+    // "播放结束后不自动接下一首" report. The subscription is inert until a
+    // transport appears, so it costs nothing in a plain browser.
+    this.native.subscribe((event) => this.onNativeEvent(event));
+    this.native.onAvailable(() => {
+      if (this.disposed) return;
+      this.value.backend = "native-libmpv";
+      // The kernel only answers `ping` once its control endpoint exists, so a
+      // host that arrives late still gets the handshake the constructor sent.
+      this.native.ping();
+      this.emit();
+    });
     if (this.native.available) {
       this.value.backend = "native-libmpv";
-      this.native.subscribe((event) => this.onNativeEvent(event));
       this.native.ping();
     }
     this.bgm = new Audio("/audio/atmosphere.ogg");
