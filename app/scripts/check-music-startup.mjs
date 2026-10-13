@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
-import { MusicFrameTiming } from '../src/music-frame-timing.ts';
+import { MusicFrameTiming } from '../src/shelf/music-frame-timing.ts';
 import './check-music-frame-timing.mjs';
 
 const { version: appVersion } = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));

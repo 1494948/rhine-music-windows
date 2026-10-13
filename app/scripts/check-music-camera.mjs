@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
-import { MusicCameraMotion, MusicPlacementMotion, MusicPresentation, musicArchiveOffset, musicArchiveTracksSettled, musicCinematicPose, musicExtractionAnchor } from '../src/music-camera.ts';
-import { damp } from '../src/motion.ts';
+import { MusicCameraMotion, MusicPlacementMotion, MusicPresentation, musicArchiveOffset, musicArchiveTracksSettled, musicCinematicPose, musicExtractionAnchor } from '../src/shelf/music-camera.ts';
+import { damp } from '../src/core/motion.ts';
 
 for (const [width, height] of [[390, 844], [1080, 1920], [1049, 1000], [0, 0]]) {
   assert.deepEqual(musicArchiveOffset(width, height), { x: 0, y: 0 },

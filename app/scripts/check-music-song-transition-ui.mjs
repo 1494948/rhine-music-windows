@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
-import { normalizeSongTransition } from '../src/music-song-transition.ts';
+import { normalizeSongTransition } from '../src/player/music-song-transition.ts';
 
 const modes = ['fade-out', 'fade-in-out', 'gapless'];
 for (const mode of modes) for (const legacy of [undefined, true, false, null, 'false', 0])

@@ -4,8 +4,8 @@ import { mock } from "node:test";
 import ts from "typescript";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { MUSIC_MODEL, MUSIC_COVER, MUSIC_CASE_LAYERS, normalizeMusicGeometry, configureMusicGlass, createAlbumPrintMaterial, shadeMusicGlass } from "../src/music-model.ts";
-import { MUSIC_CD_ASSET } from "../src/music-cd-asset.ts";
+import { MUSIC_MODEL, MUSIC_COVER, MUSIC_CASE_LAYERS, normalizeMusicGeometry, configureMusicGlass, createAlbumPrintMaterial, shadeMusicGlass } from "../src/shelf/music-model.ts";
+import { MUSIC_CD_ASSET } from "../src/core/music-cd-asset.ts";
 
 // Match the existing presentation/lighting checks: transpile production code
 // with parameter properties, then resolve its imports from the original file.
@@ -18,9 +18,9 @@ async function sourceModule(path, overrides = {}) {
     `from ${JSON.stringify(overrides[specifier] ?? (specifier.startsWith(".") ? new URL(specifier, url).href : import.meta.resolve(specifier)))}`);
   return `data:text/javascript;base64,${Buffer.from(code).toString("base64")}`;
 }
-const transitionUrl = await sourceModule("../src/theme-transition.ts");
+const transitionUrl = await sourceModule("../src/core/theme-transition.ts");
 const { ThemeTransition } = await import(transitionUrl);
-const { CardAppearance } = await import(await sourceModule("../src/appearance.ts", {
+const { CardAppearance } = await import(await sourceModule("../src/core/appearance.ts", {
   "./theme-transition.ts": transitionUrl,
 }));
 

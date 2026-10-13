@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MusicPlayer } from '../src/music-player.ts'
+import { MusicPlayer } from '../src/player/music-player.ts'
 
 /**
  * Native-kernel event plumbing.

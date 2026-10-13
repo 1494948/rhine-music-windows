@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import * as T from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { glassRevealAtHeight as reveal } from "../src/glass-reveal.ts";
-import { decryptionFrame } from "../src/decryption.ts";
+import { glassRevealAtHeight as reveal } from "../src/viewer/glass-reveal.ts";
+import { decryptionFrame } from "../src/core/decryption.ts";
 async function load(path) {
   const b = await readFile(new URL(path, import.meta.url));
   const s = (

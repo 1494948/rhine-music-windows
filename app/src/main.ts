@@ -11,7 +11,7 @@ document.addEventListener("dragstart", (event) => {
 
 // Preserve the original experience as a visual reference while developing music mode.
 if (new URLSearchParams(location.search).get("original") === "1") {
-  void import("./archive-main");
+  void import("./archive-main.ts");
 } else {
-  void import("./music-app");
+  void import("./music-app.ts");
 }

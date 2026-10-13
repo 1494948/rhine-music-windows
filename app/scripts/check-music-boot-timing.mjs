@@ -18,10 +18,10 @@ function sourceModule(path) {
   return compiled;
 }
 
-const timingModule = sourceModule('../src/music-boot-timing.ts');
+const timingModule = sourceModule('../src/boot/music-boot-timing.ts');
 const { MusicBootFrameClock, MUSIC_BOOT_START_TIME: START, MUSIC_BOOT_END_TIME: END, MUSIC_BOOT_SCENE_REVEAL_TIME, MUSIC_BOOT_SCENE_START, musicBootSceneTime } = await import(timingModule);
-const { MusicBoot } = await import(sourceModule('../src/music-boot.ts'));
-const { musicOpeningFrame, MUSIC_OPENING_SLOGAN } = await import(sourceModule('../src/music-opening.ts'));
+const { MusicBoot } = await import(sourceModule('../src/boot/music-boot.ts'));
+const { musicOpeningFrame, MUSIC_OPENING_SLOGAN } = await import(sourceModule('../src/shelf/music-opening.ts'));
 const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < 1e-9,
   `${message}: expected ${expected}, received ${actual}`);
 

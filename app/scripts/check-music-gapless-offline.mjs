@@ -7,7 +7,7 @@ const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright')
 const browser = await chromium.launch({ channel: 'chrome', headless: true, args: ['--mute-audio'] })
 try {
   const page = await browser.newPage()
-  const source = await fs.readFile(new URL('../src/music-browser-gapless.ts', import.meta.url), 'utf8')
+  const source = await fs.readFile(new URL('../src/player/music-browser-gapless.ts', import.meta.url), 'utf8')
   const javascript = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
   const results = await page.evaluate(async javascript => {
     const { BrowserGaplessPlayer } = await import(URL.createObjectURL(new Blob([javascript], { type: 'text/javascript' })))

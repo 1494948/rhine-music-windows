@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { LyricsPane } from '../src/music-lyrics-pane.ts'
-import { parseLrc } from '../src/music-lyrics.ts'
+import { LyricsPane } from '../src/lyrics/music-lyrics-pane.ts'
+import { parseLrc } from '../src/lyrics/music-lyrics.ts'
 
 /**
  * The lyrics pane as a component.

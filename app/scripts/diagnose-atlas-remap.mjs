@@ -10,8 +10,8 @@
 //
 // 用法：node scripts/diagnose-atlas-remap.mjs
 
-import { setMusicAlbums, archiveColumns, columnFiles } from '../src/data.ts';
-import { fileAtCell, poolAlbumCapacity, visibleCell, MUSIC_LOOP_ROWS, LOOP_COLUMNS } from '../src/archive-loop.ts';
+import { setMusicAlbums, archiveColumns, columnFiles } from '../src/core/data.ts';
+import { fileAtCell, poolAlbumCapacity, visibleCell, MUSIC_LOOP_ROWS, LOOP_COLUMNS } from '../src/viewer/archive-loop.ts';
 
 const SLOTS = LOOP_COLUMNS * MUSIC_LOOP_ROWS; // 432
 const ATLAS_COLUMNS = 16;

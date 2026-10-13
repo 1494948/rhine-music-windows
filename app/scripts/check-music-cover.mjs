@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import ts from "typescript";
 import * as THREE from "three";
-import { CoverAtlas, COVER_INSET, COVER_PAINT_SIZE, COVER_SIZE, containCover, paintCover } from "../src/cover-atlas.ts";
+import { CoverAtlas, COVER_INSET, COVER_PAINT_SIZE, COVER_SIZE, containCover, paintCover } from "../src/shelf/cover-atlas.ts";
 
 // Deterministic image decode/canvas harness exercises production ownership and
 // drawing code. Pixel quality and GPU transmission are checked in the browser.
@@ -102,7 +102,7 @@ try {
   assert.equal(tile, "cover-new");
 
   // The standalone viewer calls the same painter, including missing art.
-  const url = new URL("../src/viewer-album-cover.ts", import.meta.url);
+  const url = new URL("../src/viewer/viewer-album-cover.ts", import.meta.url);
   const { outputText } = ts.transpileModule(await fs.readFile(url, "utf8"), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } });
   const code = outputText.replace(/from\s+(["'])([^"']+)\1/g, (_match, _quote, specifier) => `from ${JSON.stringify(specifier.startsWith(".") ? new URL(specifier === "./cover-atlas" ? "./cover-atlas.ts" : specifier, url).href : import.meta.resolve(specifier))}`);
   const { ViewerAlbumCover } = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { MusicPlayer } from '../src/music-player.ts'
+import { MusicPlayer } from '../src/player/music-player.ts'
 
 const settle = async () => { for (let i = 0; i < 12; i += 1) await Promise.resolve() }
 

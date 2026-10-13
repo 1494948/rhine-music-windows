@@ -6,7 +6,7 @@ import {
   validateContent,
   archiveText,
 } from "./archive-content.mjs";
-import { escapeHtml } from "../src/html.ts";
+import { escapeHtml } from "../src/core/html.ts";
 
 const content = await loadContent();
 test("all forty downloads match the shared content, including the UTF-8 BOM", async () => {

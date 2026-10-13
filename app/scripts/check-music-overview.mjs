@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
 import * as THREE from 'three';
-import { MusicOverviewMotion, overviewFraming, visibleOverviewLabels } from '../src/music-overview.ts';
-import { isRealAlbumCell } from '../src/music-array-layout.ts';
-import { visibleCell, MUSIC_LOOP_ROWS, LOOP_COLUMNS, COLUMN_SPACING, ROW_SPACING } from '../src/archive-loop.ts';
-import { setMusicAlbums, archiveColumns, columnFiles, musicLibrary } from '../src/data.ts';
-import { MUSIC_MODEL } from '../src/music-model.ts';
-import { musicOverviewColumnExtent } from '../src/music-overview-edge.ts';
-import { MusicRealColumns } from '../src/music-real-columns.ts';
+import { MusicOverviewMotion, overviewFraming, visibleOverviewLabels } from '../src/shelf/music-overview.ts';
+import { isRealAlbumCell } from '../src/shelf/music-array-layout.ts';
+import { visibleCell, MUSIC_LOOP_ROWS, LOOP_COLUMNS, COLUMN_SPACING, ROW_SPACING } from '../src/viewer/archive-loop.ts';
+import { setMusicAlbums, archiveColumns, columnFiles, musicLibrary } from '../src/core/data.ts';
+import { MUSIC_MODEL } from '../src/shelf/music-model.ts';
+import { musicOverviewColumnExtent } from '../src/shelf/music-overview-edge.ts';
+import { MusicRealColumns } from '../src/shelf/music-real-columns.ts';
 
 for (const fps of [20, 30, 60, 120]) {
   const motion = new MusicOverviewMotion();
@@ -54,7 +54,7 @@ for (const [lane,row] of [[-1,12],[0,11],[0,14],[2,12],[0,12.5]])
 // Exercise ArchiveScene's actual projection and pool methods with a real Three
 // camera, avoiding browser/WebGL construction. Extract method bodies and parameters
 // unchanged from production, with the production library data view injected.
-const source = ts.createSourceFile('scene.ts', await readFile(new URL('../src/scene.ts', import.meta.url), 'utf8'),
+const source = ts.createSourceFile('scene.ts', await readFile(new URL('../src/shelf/scene.ts', import.meta.url), 'utf8'),
   ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const methodNames = ['getOverviewColumns', 'musicColumnRowOffset', 'visibleMusicCell', 'musicColumnExtent', 'applyMusicColumnExtent'];
 const methodBodies = new Map();

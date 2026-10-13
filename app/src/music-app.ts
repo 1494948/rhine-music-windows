@@ -1,20 +1,20 @@
 import "@kitlangton/rolling-number/styles.css";
-import "./style.css";
-import "./quality-settings.css";
-import "./document-decryption.css";
-import "./decryption.css";
-import "./music.css";
-import "./music-navigation-motion.css";
-import "./music-navigation-ruler.css";
-import "./music-transport-title.css";
-import "./music-theme.css";
-import "./music-theme-switch.css";
-import "./music-archive.css";
-import "./music-lyrics-switch.css";
-import { DocumentDecryption } from "./document-decryption";
-import { ContentTransition, SurfaceTransition } from "./ui-transitions";
-import { qualityMarkup, syncQualityUI } from "./quality-settings";
-import { ArchiveScene } from "./scene";
+import "./core/style.css";
+import "./core/quality-settings.css";
+import "./core/document-decryption.css";
+import "./core/decryption.css";
+import "./shelf/music.css";
+import "./shelf/music-navigation-motion.css";
+import "./shelf/music-navigation-ruler.css";
+import "./shelf/music-transport-title.css";
+import "./shelf/music-theme.css";
+import "./shelf/music-theme-switch.css";
+import "./shelf/music-archive.css";
+import "./lyrics/music-lyrics-switch.css";
+import { DocumentDecryption } from "./core/document-decryption.ts";
+import { ContentTransition, SurfaceTransition } from "./core/ui-transitions.ts";
+import { qualityMarkup, syncQualityUI } from "./core/quality-settings.ts";
+import { ArchiveScene } from "./shelf/scene.ts";
 import {
   records,
   archiveColumns,
@@ -23,60 +23,60 @@ import {
   setMusicAlbums,
   orderMusicAlbums,
   type MusicSortMode,
-} from "./data";
-import { fileAtCell, wrap, type ArchiveNavigation } from "./archive-loop";
+} from "./core/data.ts";
+import { fileAtCell, wrap, type ArchiveNavigation } from "./viewer/archive-loop.ts";
 import {
   normalizeQuality,
   qualityPresets,
   type QualityPreset,
   type RenderQuality,
-} from "./render-quality";
+} from "./core/render-quality.ts";
 import {
   MusicPlayer,
   normalizePlayMode,
   PLAY_MODES,
   type MusicPlayerState,
   type PlayMode,
-} from "./music-player";
+} from "./player/music-player.ts";
 import {
   getNativePlayback,
   loadNativeKernelPrefs,
   saveNativeKernelPrefs,
-} from "./native-playback";
-import { ModelViewer } from "./model-viewer";
-import { TerminalAudio } from "./audio";
+} from "./player/native-playback.ts";
+import { ModelViewer } from "./viewer/model-viewer.ts";
+import { TerminalAudio } from "./player/audio.ts";
 import type {
   MusicAlbum,
   MusicGenre,
   MusicLibrary,
   GenreRules,
-} from "./music-types";
-import { demoAlbums, demoGenres } from "./demo-library";
-import { escapeHtml as esc } from "./html";
-import { albumTitleMarkup, setupMusicTitleLayout } from "./music-title";
-import { setupMusicTextMotion } from "./music-text-motion";
-import { setupTransportTitle } from "./music-transport-title";
-import { setupMusicTicks } from "./music-ticks";
-import { setupMusicRuler } from "./music-ruler";
-import { MusicPresentation, type AlbumSelection } from "./music-presentation";
-import { MusicTrackFocus } from "./music-track-focus";
-import { MusicBoot } from "./music-boot";
-import { viewportLayout } from "./viewport-layout";
+} from "./core/music-types.ts";
+import { demoAlbums, demoGenres } from "./core/demo-library.ts";
+import { escapeHtml as esc } from "./core/html.ts";
+import { albumTitleMarkup, setupMusicTitleLayout } from "./shelf/music-title.ts";
+import { setupMusicTextMotion } from "./shelf/music-text-motion.ts";
+import { setupTransportTitle } from "./shelf/music-transport-title.ts";
+import { setupMusicTicks } from "./shelf/music-ticks.ts";
+import { setupMusicRuler } from "./shelf/music-ruler.ts";
+import { MusicPresentation, type AlbumSelection } from "./shelf/music-presentation.ts";
+import { MusicTrackFocus } from "./shelf/music-track-focus.ts";
+import { MusicBoot } from "./boot/music-boot.ts";
+import { viewportLayout } from "./core/viewport-layout.ts";
 import {
   albumArchiveMarkup,
   resolveAlbumArchive,
   type AlbumArchiveContext,
   type AlbumArchiveOnline,
-} from "./music-archive";
+} from "./shelf/music-archive.ts";
 import {
   EMPTY_LYRICS,
   findActiveLine,
   parseLyricsPayload,
   type LyricsDocument,
   type LyricsPayload,
-} from "./music-lyrics";
-import { LyricsPane, type LyricsPaneTrack } from "./music-lyrics-pane";
-import "./lyrics-settings.css";
+} from "./lyrics/music-lyrics.ts";
+import { LyricsPane, type LyricsPaneTrack } from "./lyrics/music-lyrics-pane.ts";
+import "./lyrics/lyrics-settings.css";
 import {
   applyLyricControl,
   applyLyricPatch,
@@ -91,24 +91,24 @@ import {
   setLyricPreviewSample,
   syncLyricsUI,
   type LyricPreviewTrack,
-} from "./lyrics-settings.ts";
-import { DetailSwitch } from "./music-detail-switch";
+} from "./lyrics/lyrics-settings.ts";
+import { DetailSwitch } from "./shelf/music-detail-switch.ts";
 import { version as appVersion } from "../package.json";
-import { normalizeMusicArrayMode, type MusicArrayMode } from "./music-array-layout";
-import { mountMusicWheelNavigation } from "./music-wheel-navigation";
-import "./music-overview.css";
-import { MusicOverviewUI } from "./music-overview-ui";
-import type { OverviewColumn } from "./music-overview";
-import { setupMotionLab } from "./music-motion-lab";
-import { setupLightingLab } from "./music-lighting-lab";
-import type { LightingLabController, LightingLabSettings } from "./music-lighting-lab";
+import { normalizeMusicArrayMode, type MusicArrayMode } from "./shelf/music-array-layout.ts";
+import { mountMusicWheelNavigation } from "./shelf/music-wheel-navigation.ts";
+import "./shelf/music-overview.css";
+import { MusicOverviewUI } from "./shelf/music-overview-ui.ts";
+import type { OverviewColumn } from "./shelf/music-overview.ts";
+import { setupMotionLab } from "./shelf/music-motion-lab.ts";
+import { setupLightingLab } from "./shelf/music-lighting-lab.ts";
+import type { LightingLabController, LightingLabSettings } from "./shelf/music-lighting-lab.ts";
 import {
   getMusicMotionSpeed,
   normalizeMusicMotionSpeed,
   onMusicMotionSpeedChange,
   setMusicMotionSpeed,
-} from "./music-motion-settings";
-import { normalizeSongTransition, type SongTransitionMode } from "./music-song-transition";
+} from "./shelf/music-motion-settings.ts";
+import { normalizeSongTransition, type SongTransitionMode } from "./player/music-song-transition.ts";
 
 type Theme = "day" | "night";
 type Panel = "library" | "search" | "settings" | null;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { musicSelectionWave, baselineSelectionWave, damp } from '../src/motion.ts';
+import { musicSelectionWave, baselineSelectionWave, damp } from '../src/core/motion.ts';
 
 // Exercise the combined taller music lift and wave: the previous superposition
 // produced a sharp early peak followed by a dip before the lift had settled.

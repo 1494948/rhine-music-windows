@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
-import { setMusicAlbums, records, archiveColumns, columnFiles, fileLocation } from '../src/data.ts';
-import { fileAtCell, nearestOccurrence, selectionCell, wrap } from '../src/archive-loop.ts';
-import { normalizeMusicArrayMode } from '../src/music-array-layout.ts';
+import { setMusicAlbums, records, archiveColumns, columnFiles, fileLocation } from '../src/core/data.ts';
+import { fileAtCell, nearestOccurrence, selectionCell, wrap } from '../src/viewer/archive-loop.ts';
+import { normalizeMusicArrayMode } from '../src/shelf/music-array-layout.ts';
 
 // Execute the production preference, change handler and navigation functions.
 // Only browser storage, presentation/scene ports and markup dependencies are mocked.
@@ -285,7 +285,7 @@ assert.equal(bounded.calls.select.at(-1).index, first[2], 'Filled multi-step bro
 assert.equal(bounded.calls.select.at(-1).navigation.direction, 3);
 bounded.arrayMode('realistic');
 assert.deepEqual(arrowState(bounded), [false, true, false, true], 'Switching back immediately restores finite endpoints');
-const css = await readFile(new URL('../src/music.css', import.meta.url), 'utf8');
+const css = await readFile(new URL('../src/shelf/music.css', import.meta.url), 'utf8');
 assert.match(css, /\.album-stepper > button:not\(:disabled\):hover/);
 assert.match(functionSource('renderDetail'), /article\.scrollTop = scroll;\s*syncAlbumNavigation\(\)/, 'Newly rebuilt detail buttons are synchronized');
 setMusicAlbums([], [], 'genre');

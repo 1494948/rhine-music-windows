@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import ts from 'typescript';
 import * as THREE from 'three';
-import { ROW_LIGHTING, DEFAULT_ROW_LIGHTING, normalizeRowLighting, sampleRowLighting, ROW_LIGHTING_GLSL } from '../src/music-row-lighting.ts';
+import { ROW_LIGHTING, DEFAULT_ROW_LIGHTING, normalizeRowLighting, sampleRowLighting, ROW_LIGHTING_GLSL } from '../src/shelf/music-row-lighting.ts';
 
 function sourceModule(path, overrides = {}) {
   const url = new URL(path, import.meta.url);
@@ -13,10 +13,10 @@ function sourceModule(path, overrides = {}) {
     `from ${JSON.stringify(overrides[specifier] ?? (specifier.startsWith('.') ? new URL(specifier, url).href : import.meta.resolve(specifier)))}`);
   return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 }
-const { MusicSelectionLighting } = await import(sourceModule('../src/music-lighting.ts', {
-  './theme-transition.ts': sourceModule('../src/theme-transition.ts'),
+const { MusicSelectionLighting } = await import(sourceModule('../src/shelf/music-lighting.ts', {
+  '../core/theme-transition.ts': sourceModule('../src/core/theme-transition.ts'),
 }));
-const { ThemeTransition } = await import(sourceModule('../src/theme-transition.ts'));
+const { ThemeTransition } = await import(sourceModule('../src/core/theme-transition.ts'));
 
 // Execute the actual scalar GLSL field expression, not merely a separately
 // restated JS approximation. Real WebGL shader compilation is browser-verified.

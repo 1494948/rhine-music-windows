@@ -8,7 +8,7 @@ import {
   settlingWave,
   damp,
   idleWave,
-} from "../src/motion.ts";
+} from "../src/core/motion.ts";
 import { selectionWave as historicalWave } from "../reference/baseline-motion.ts";
 
 // The selected production motion is the original signed wave, including troughs.

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { MusicRealColumns, MusicRealColumnScalar } from '../src/music-real-columns.ts';
-import { musicArchiveTravelDuration } from '../src/music-archive-motion.ts';
-import { damp } from '../src/motion.ts';
+import { MusicRealColumns, MusicRealColumnScalar } from '../src/shelf/music-real-columns.ts';
+import { musicArchiveTravelDuration } from '../src/shelf/music-archive-motion.ts';
+import { damp } from '../src/core/motion.ts';
 
 const close = (actual, expected, tolerance = 1e-8) => assert.ok(
   Number.isFinite(actual) && Math.abs(actual - expected) <= tolerance,

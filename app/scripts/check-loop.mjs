@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { columnFiles, fileLocation } from "../src/data.ts";
+import { columnFiles, fileLocation } from "../src/core/data.ts";
 import {
   fileAtCell,
   selectionCell,
@@ -9,7 +9,7 @@ import {
   LOOP_COLUMNS,
   LOOP_ROWS,
   wrap,
-} from "../src/archive-loop.ts";
+} from "../src/viewer/archive-loop.ts";
 
 // The same eight files and five column categories recur on both sides of zero.
 for (let lane = -23; lane <= 23; lane++) {

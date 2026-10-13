@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { BrowserGaplessPlayer, pcmWaveFrames, GAPLESS_FILE_BYTES } from '../src/music-browser-gapless.ts'
-import { MusicPlayer } from '../src/music-player.ts'
+import { BrowserGaplessPlayer, pcmWaveFrames, GAPLESS_FILE_BYTES } from '../src/player/music-browser-gapless.ts'
+import { MusicPlayer } from '../src/player/music-player.ts'
 
 export function wave(frames = 4800, sampleRate = 48000, channels = 2, phase = 0) {
   const data = new ArrayBuffer(44 + frames * channels * 2), view = new DataView(data)

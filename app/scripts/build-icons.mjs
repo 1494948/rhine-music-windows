@@ -2,7 +2,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { labelMarkSvg } from "../src/brand.ts";
+import { labelMarkSvg } from "../src/core/brand.ts";
 const {default:sharp}=await import(process.env.SHARP_MODULE ? pathToFileURL(resolve(process.env.SHARP_MODULE)).href : 'sharp');
 const mark=labelMarkSvg.replace(/^<svg[^>]*>/,'').replace(/<\/svg>$/,'');
 const svg=`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><rect width="512" height="512" fill="#e8e5e1"/><g transform="translate(91 179) scale(1.0645)" color="#171713">${mark}</g></svg>`;

@@ -25,9 +25,9 @@ async function transpiledModuleUrl(url) {
   moduleUrls.set(url.href, result);
   return result;
 }
-const { setMusicMotionSpeed } = await import(await transpiledModuleUrl(new URL('../src/music-motion-settings.ts', import.meta.url)));
-const { createTitleReels } = await import(await transpiledModuleUrl(new URL('../src/music-title-reels.ts', import.meta.url)));
-const { setupMusicRuler } = await import(await transpiledModuleUrl(new URL('../src/music-ruler.ts', import.meta.url)));
+const { setMusicMotionSpeed } = await import(await transpiledModuleUrl(new URL('../src/shelf/music-motion-settings.ts', import.meta.url)));
+const { createTitleReels } = await import(await transpiledModuleUrl(new URL('../src/shelf/music-title-reels.ts', import.meta.url)));
+const { setupMusicRuler } = await import(await transpiledModuleUrl(new URL('../src/shelf/music-ruler.ts', import.meta.url)));
 const settleMicrotasks = async () => { for (let i = 0; i < 8; i++) await Promise.resolve(); };
 
 function fixture(t) {

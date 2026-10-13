@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { viewportLayout, archiveFraming, swipeDirection } from "../src/viewport-layout.ts";
-import { renderDimensions, qualityPresets } from "../src/render-quality.ts";
+import { viewportLayout, archiveFraming, swipeDirection } from "../src/core/viewport-layout.ts";
+import { renderDimensions, qualityPresets } from "../src/core/render-quality.ts";
 
 for (const [w,h,touch] of [[1920,1080,false],[2560,1080,false],[1280,1024,false],[844,390,true],[390,844,true],[320,568,true]]) {
   const layout=viewportLayout(w,h,touch);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import * as THREE from "three";
-import { CardAppearance } from "../src/appearance.ts";
+import { CardAppearance } from "../src/core/appearance.ts";
 
 const appearance = new CardAppearance();
 const high = new THREE.MeshPhysicalMaterial({

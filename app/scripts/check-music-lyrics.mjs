@@ -16,9 +16,9 @@ import {
   splitChars,
   splitUnits,
   unitReveal,
-} from '../src/music-lyrics.ts';
-import { resolveAlbumArchive, albumArchiveMarkup } from '../src/music-archive.ts';
-import { escapeHtml } from '../src/html.ts';
+} from '../src/lyrics/music-lyrics.ts';
+import { resolveAlbumArchive, albumArchiveMarkup } from '../src/shelf/music-archive.ts';
+import { escapeHtml } from '../src/core/html.ts';
 import { lyricsCacheSize, readLyrics, resetLyricsCache } from './lyrics.mjs';
 
 /** Float timestamps are compared with a tolerance; LRC decimals are not exact. */
@@ -513,7 +513,21 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   // Every class, attribute and custom property the controllers write has to be
   // spelled the same way in the stylesheets. A mismatch is invisible at build
   // time and only shows up as a missing animation, so it is asserted here.
-  const read = (name) => fs.readFile(new URL(`../src/${name}`, import.meta.url), 'utf8');
+  // `src/` is organised by area (see app/src/README), so a bare filename no
+  // longer identifies a path. Resolve through the area each file lives in.
+  const AREA = {
+    'music-lyrics-switch.css': 'lyrics',
+    'music-archive.css': 'shelf',
+    'music-lyrics-pane.ts': 'lyrics',
+    'music-detail-switch.ts': 'shelf',
+    'music-app.ts': '',
+    'lyrics-settings.ts': 'lyrics',
+  };
+  const read = (name) =>
+    fs.readFile(
+      new URL(`../src/${AREA[name] ? `${AREA[name]}/` : ''}${name}`, import.meta.url),
+      'utf8',
+    );
   const [switchCss, archiveCss, paneSource, switchSource, appSource] = await Promise.all([
     read('music-lyrics-switch.css'),
     read('music-archive.css'),
@@ -724,7 +738,12 @@ const context = { ordinal: 75, libraryCount: 79, column: '未分类', columnInde
   // Cross-file contract for the online panel: the actions the controller
   // dispatches, the status the stylesheet styles, and the escape hatch the
   // server hands back all have to be spelled the same way.
-  const read = (name) => fs.readFile(new URL(`../src/${name}`, import.meta.url), 'utf8');
+  const AREA = { 'music-archive.css': 'shelf', 'music-app.ts': '', 'music-archive.ts': 'shelf' };
+  const read = (name) =>
+    fs.readFile(
+      new URL(`../src/${AREA[name] ? `${AREA[name]}/` : ''}${name}`, import.meta.url),
+      'utf8',
+    );
   const [archiveCss, appSource, archiveSource] = await Promise.all([
     read('music-archive.css'),
     read('music-app.ts'),

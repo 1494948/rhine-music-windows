@@ -1,6 +1,6 @@
 // Exercise the production metrics class without a renderer or DOM.
 import assert from 'node:assert/strict';
-import { MusicFrameTiming } from '../src/music-frame-timing.ts';
+import { MusicFrameTiming } from '../src/shelf/music-frame-timing.ts';
 
 const empty = { samples: 0, fps: 0, frameP50: 0, frameP95: 0, frameMax: 0, over50ms: 0, cpuP95: 0 };
 const timing = new MusicFrameTiming();

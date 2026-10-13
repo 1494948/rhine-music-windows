@@ -25,7 +25,7 @@ async function transpiledModuleUrl(url) {
   moduleUrls.set(url.href, result);
   return result;
 }
-const { MusicPresentation } = await import(await transpiledModuleUrl(new URL('../src/music-presentation.ts', import.meta.url)));
+const { MusicPresentation } = await import(await transpiledModuleUrl(new URL('../src/shelf/music-presentation.ts', import.meta.url)));
 
 function fixture({ reduced = false } = {}) {
   const events = [];
@@ -429,8 +429,8 @@ test('enabling reduced motion during an exit can finish existing callbacks safel
   assert.equal(f.events.at(-1), 'browse:show');
 });
 
-const { SurfaceTransition } = await import(await transpiledModuleUrl(new URL('../src/ui-transitions.ts', import.meta.url)));
-const { setMusicMotionSpeed } = await import(await transpiledModuleUrl(new URL('../src/music-motion-settings.ts', import.meta.url)));
+const { SurfaceTransition } = await import(await transpiledModuleUrl(new URL('../src/core/ui-transitions.ts', import.meta.url)));
+const { setMusicMotionSpeed } = await import(await transpiledModuleUrl(new URL('../src/shelf/music-motion-settings.ts', import.meta.url)));
 
 function animationElement(hidden = false) {
   const element = { hidden, dataset: {}, opacity: '1', transform: 'none', animations: [] };

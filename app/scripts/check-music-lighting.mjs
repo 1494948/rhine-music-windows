@@ -3,9 +3,9 @@ import fs from 'node:fs';
 import ts from 'typescript';
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { COLUMN_SPACING, ROW_SPACING, LOOP_COLUMNS, LOOP_ROWS, visibleCell } from '../src/archive-loop.ts';
-import { MUSIC_MODEL, normalizeMusicGeometry, createAlbumPrintMaterial } from '../src/music-model.ts';
-import { MUSIC_CD_ASSET } from '../src/music-cd-asset.ts';
+import { COLUMN_SPACING, ROW_SPACING, LOOP_COLUMNS, LOOP_ROWS, visibleCell } from '../src/viewer/archive-loop.ts';
+import { MUSIC_MODEL, normalizeMusicGeometry, createAlbumPrintMaterial } from '../src/shelf/music-model.ts';
+import { MUSIC_CD_ASSET } from '../src/core/music-cd-asset.ts';
 
 // Resolve every production import, including the shared theme transition.
 // Both classes use parameter properties that require transpilation for Node.
@@ -18,9 +18,9 @@ function sourceModule(path, overrides = {}) {
     `from ${JSON.stringify(overrides[specifier] ?? (specifier.startsWith('.') ? new URL(specifier, url).href : import.meta.resolve(specifier)))}`);
   return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 }
-const transitionUrl = sourceModule('../src/theme-transition.ts');
-const { MusicSelectionLighting } = await import(sourceModule('../src/music-lighting.ts', {
-  './theme-transition.ts': transitionUrl,
+const transitionUrl = sourceModule('../src/core/theme-transition.ts');
+const { MusicSelectionLighting } = await import(sourceModule('../src/shelf/music-lighting.ts', {
+  '../core/theme-transition.ts': transitionUrl,
 }));
 function setup() {
   const light = new MusicSelectionLighting(new THREE.Scene());

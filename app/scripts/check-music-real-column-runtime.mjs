@@ -2,18 +2,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import ts from 'typescript';
 import * as THREE from 'three';
-import * as motion from '../src/motion.ts';
-import * as loop from '../src/archive-loop.ts';
-import * as data from '../src/data.ts';
-import { MusicRealColumns } from '../src/music-real-columns.ts';
-import { isRealAlbumCell } from '../src/music-array-layout.ts';
-import { musicOverviewColumnExtent } from '../src/music-overview-edge.ts';
-import { MUSIC_MODEL } from '../src/music-model.ts';
+import * as motion from '../src/core/motion.ts';
+import * as loop from '../src/viewer/archive-loop.ts';
+import * as data from '../src/core/data.ts';
+import { MusicRealColumns } from '../src/shelf/music-real-columns.ts';
+import { isRealAlbumCell } from '../src/shelf/music-array-layout.ts';
+import { musicOverviewColumnExtent } from '../src/shelf/music-overview-edge.ts';
+import { MUSIC_MODEL } from '../src/shelf/music-model.ts';
 
 // Execute production field, pool and matrix updates with actual Three objects.
 // Material uploads and rendering are replaced; world transforms, cover slot IDs
 // and ray intersections are measured rather than inferred from source strings.
-const source = fs.readFileSync(new URL('../src/scene.ts', import.meta.url), 'utf8');
+const source = fs.readFileSync(new URL('../src/shelf/scene.ts', import.meta.url), 'utf8');
 const tree = ts.createSourceFile('scene.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const klass = tree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === 'ArchiveScene');
 const methodNames = ['cellPosition', 'actualCell', 'musicColumnRowOffset', 'visibleMusicCell',

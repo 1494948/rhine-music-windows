@@ -2,14 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import ts from 'typescript';
 import * as THREE from 'three';
-import { MusicArchiveMotion, musicArchiveTravelDuration, ARCHIVE_TRACK_KEYS } from '../src/music-archive-motion.ts';
-import { MusicPlacementMotion, MusicPresentation, musicArchiveTracksSettled } from '../src/music-camera.ts';
-import { musicOverviewColumnExtent } from '../src/music-overview-edge.ts';
-import { visibleCell, MUSIC_LOOP_ROWS, LOOP_COLUMNS } from '../src/archive-loop.ts';
-import { damp } from '../src/motion.ts';
-import { setMusicAlbums, records, archiveColumns, columnFiles, fileLocation } from '../src/data.ts';
-import { selectionCell, sameCell, wrap, fileAtCell, nearestOccurrence, COLUMN_SPACING, ROW_SPACING } from '../src/archive-loop.ts';
-import { MusicRealColumns } from '../src/music-real-columns.ts';
+import { MusicArchiveMotion, musicArchiveTravelDuration, ARCHIVE_TRACK_KEYS } from '../src/shelf/music-archive-motion.ts';
+import { MusicPlacementMotion, MusicPresentation, musicArchiveTracksSettled } from '../src/shelf/music-camera.ts';
+import { musicOverviewColumnExtent } from '../src/shelf/music-overview-edge.ts';
+import { visibleCell, MUSIC_LOOP_ROWS, LOOP_COLUMNS } from '../src/viewer/archive-loop.ts';
+import { damp } from '../src/core/motion.ts';
+import { setMusicAlbums, records, archiveColumns, columnFiles, fileLocation } from '../src/core/data.ts';
+import { selectionCell, sameCell, wrap, fileAtCell, nearestOccurrence, COLUMN_SPACING, ROW_SPACING } from '../src/viewer/archive-loop.ts';
+import { MusicRealColumns } from '../src/shelf/music-real-columns.ts';
 
 const rates = { column: 3.7, rail: 3.7, lane: 4, shoulder: 5 };
 const target = (lanes, rows) => ({ column: lanes * 5.2, rail: -rows * .62, lane: lanes, shoulder: rows });
@@ -153,7 +153,7 @@ for (let center = -12; center < 12; center += .005) {
 }
 assert.ok(recycleCount > 20, 'Exercise actual pool recycling in both coordinate signs');
 
-const scene = fs.readFileSync(new URL('../src/scene.ts', import.meta.url), 'utf8');
+const scene = fs.readFileSync(new URL('../src/shelf/scene.ts', import.meta.url), 'utf8');
 assert.match(scene, /this\.musicArchiveMotion\.update\(archiveTracks, dt, this\.reduced\)/,
   'Global speed is applied once by the existing scene clock');
 assert.match(scene, /this\.musicArchiveMotion\.settled && tracksSettled/,
@@ -203,7 +203,7 @@ const advanceTracks = new Function('musicLibrary', 'damp', 'MUSIC_ALBUM_SWITCH_R
     ${realColumnUpdate.getText(sceneTree)}
   };
 `))(true, damp, 9);
-const presentationCode = transpile(fs.readFileSync(new URL('../src/music-presentation.ts', import.meta.url), 'utf8'));
+const presentationCode = transpile(fs.readFileSync(new URL('../src/shelf/music-presentation.ts', import.meta.url), 'utf8'));
 const { MusicPresentation: AlbumPresentation } = await import(`data:text/javascript;base64,${Buffer.from(presentationCode).toString('base64')}`);
 
 function navigationFixture(mode = 'filled', reduced = false, speed = 1) {

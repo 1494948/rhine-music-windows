@@ -1,36 +1,36 @@
-import { InspectionOverlay } from "./inspection-overlay";
-import { DocumentDecryption } from "./document-decryption";
-import "./document-decryption.css";
-import "./decryption.css";
-import { escapeHtml } from "./html";
-import { normalizeQuality, qualityPresets, type QualityPreset, type RenderQuality } from "./render-quality";
-import { qualityMarkup, syncQualityUI } from "./quality-settings";
+import { InspectionOverlay } from "./viewer/inspection-overlay.ts";
+import { DocumentDecryption } from "./core/document-decryption.ts";
+import "./core/document-decryption.css";
+import "./core/decryption.css";
+import { escapeHtml } from "./core/html.ts";
+import { normalizeQuality, qualityPresets, type QualityPreset, type RenderQuality } from "./core/render-quality.ts";
+import { qualityMarkup, syncQualityUI } from "./core/quality-settings.ts";
 import "@kitlangton/rolling-number/styles.css";
-import "./style.css";
-import "./quality-settings.css";
-import "./responsive.css";
-import { viewportLayout } from "./viewport-layout";
-import { assetUrl } from "./asset-url";
-import { initPwa, pwaSettingsMarkup } from "./pwa";
+import "./core/style.css";
+import "./core/quality-settings.css";
+import "./core/responsive.css";
+import { viewportLayout } from "./core/viewport-layout.ts";
+import { assetUrl } from "./core/asset-url.ts";
+import { initPwa, pwaSettingsMarkup } from "./core/pwa.ts";
 import { createRollingNumber, createRollingText } from "@kitlangton/rolling-number";
-import { ArchiveScene } from "./scene";
-import { ModelViewer } from "./model-viewer";
-import { ContentTransition, SurfaceTransition } from "./ui-transitions";
-import { BootSequence } from "./boot";
-import { wrap, type ArchiveNavigation } from "./archive-loop";
+import { ArchiveScene } from "./shelf/scene.ts";
+import { ModelViewer } from "./viewer/model-viewer.ts";
+import { ContentTransition, SurfaceTransition } from "./core/ui-transitions.ts";
+import { BootSequence } from "./boot/boot.ts";
+import { wrap, type ArchiveNavigation } from "./viewer/archive-loop.ts";
 import {
   records,
   categories,
   archiveColumns,
   columnFiles,
   fileLocation,
-} from "./data";
-import { TerminalAudio } from "./audio";
-import { audioSettingsMarkup } from "./audio-settings";
+} from "./core/data.ts";
+import { TerminalAudio } from "./player/audio.ts";
+import { audioSettingsMarkup } from "./player/audio-settings.ts";
 
 const $ = <T extends HTMLElement = HTMLElement>(selector: string) =>
   document.querySelector<T>(selector)!;
-import { logo, brandHeading } from "./brand";
+import { logo, brandHeading } from "./core/brand.ts";
 
 $("#stage").innerHTML = `
   <div id="three-scene" class="three-scene"></div>

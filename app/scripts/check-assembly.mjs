@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { damp } from "../src/motion.ts";
+import { damp } from "../src/core/motion.ts";
 async function load(name) {
   const b = await readFile(
     new URL("../public/assets/" + name, import.meta.url),

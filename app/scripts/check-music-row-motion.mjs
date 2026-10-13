@@ -13,14 +13,14 @@ function sourceModule(path, overrides = {}) {
   return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 }
 
-const rowModule = sourceModule('../src/music-row-lighting.ts');
+const rowModule = sourceModule('../src/shelf/music-row-lighting.ts');
 const { ROW_LIGHTING, DEFAULT_ROW_LIGHTING, introRowOffset, followRowLight } = await import(rowModule);
-const { damp } = await import(sourceModule('../src/motion.ts'));
-const { MusicSelectionLighting } = await import(sourceModule('../src/music-lighting.ts', {
-  './theme-transition.ts': sourceModule('../src/theme-transition.ts'),
+const { damp } = await import(sourceModule('../src/core/motion.ts'));
+const { MusicSelectionLighting } = await import(sourceModule('../src/shelf/music-lighting.ts', {
+  '../core/theme-transition.ts': sourceModule('../src/core/theme-transition.ts'),
   './music-row-lighting.ts': rowModule,
 }));
-const { MusicRealColumns } = await import(sourceModule('../src/music-real-columns.ts'));
+const { MusicRealColumns } = await import(sourceModule('../src/shelf/music-real-columns.ts'));
 
 const EPSILON = 1e-9;
 const close = (actual, expected, message) => assert.ok(Math.abs(actual - expected) < EPSILON,

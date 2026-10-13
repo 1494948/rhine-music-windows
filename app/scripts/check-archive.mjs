@@ -8,14 +8,14 @@ import {
   columnFiles,
   fileLocation,
   fileAtSlot,
-} from "../src/data.ts";
+} from "../src/core/data.ts";
 import {
   cinematicField,
   columnStrength,
   INSPECTION_LIFT,
   returnStep,
   damp,
-} from "../src/motion.ts";
+} from "../src/core/motion.ts";
 
 assert.equal(records.length, 40);
 const slots = new Set();

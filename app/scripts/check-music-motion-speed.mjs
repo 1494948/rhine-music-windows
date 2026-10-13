@@ -15,18 +15,18 @@ function sourceModule(path, overrides = {}) {
   return `data:text/javascript;base64,${Buffer.from(code).toString('base64')}`;
 }
 
-const motionModule = sourceModule('../src/motion.ts');
+const motionModule = sourceModule('../src/core/motion.ts');
 const { damp } = await import(motionModule);
-const { MusicPlacementMotion } = await import(sourceModule('../src/music-camera.ts', {
-  './motion.ts': motionModule,
-  './viewport-layout.ts': sourceModule('../src/viewport-layout.ts'),
+const { MusicPlacementMotion } = await import(sourceModule('../src/shelf/music-camera.ts', {
+  '../core/motion.ts': motionModule,
+  '../core/viewport-layout.ts': sourceModule('../src/core/viewport-layout.ts'),
 }));
-const { followRowLight } = await import(sourceModule('../src/music-row-lighting.ts'));
-const { ThemeTransition } = await import(sourceModule('../src/theme-transition.ts'));
+const { followRowLight } = await import(sourceModule('../src/shelf/music-row-lighting.ts'));
+const { ThemeTransition } = await import(sourceModule('../src/core/theme-transition.ts'));
 const {
   normalizeMusicMotionSpeed, getMusicMotionSpeed, setMusicMotionSpeed,
   musicMotionDuration, onMusicMotionSpeedChange,
-} = await import(sourceModule('../src/music-motion-settings.ts'));
+} = await import(sourceModule('../src/shelf/music-motion-settings.ts'));
 
 const close = (actual, expected, tolerance, message) => assert.ok(
   Number.isFinite(actual) && Math.abs(actual - expected) <= tolerance,

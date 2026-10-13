@@ -3,7 +3,7 @@ import {
   musicWheelDelta,
   MusicWheelSteps,
   mountMusicWheelNavigation,
-} from "../src/music-wheel-navigation.ts";
+} from "../src/shelf/music-wheel-navigation.ts";
 
 const input = (deltaY, overrides = {}) => ({
   deltaY,

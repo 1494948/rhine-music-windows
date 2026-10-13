@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { setMusicAlbums, records, archiveColumns, columnFiles, fileAtSlot, fileLocation } from '../src/data.ts';
-import { fileAtCell, poolAlbumCapacity, selectionCell, visibleCell, cellKey, LOOP_COLUMNS, LOOP_ROWS, MUSIC_LOOP_ROWS, wrap } from '../src/archive-loop.ts';
-import { containCover, atlasSubRectY, imageSizeFromHeader } from '../src/cover-atlas.ts';
+import { setMusicAlbums, records, archiveColumns, columnFiles, fileAtSlot, fileLocation } from '../src/core/data.ts';
+import { fileAtCell, poolAlbumCapacity, selectionCell, visibleCell, cellKey, LOOP_COLUMNS, LOOP_ROWS, MUSIC_LOOP_ROWS, wrap } from '../src/viewer/archive-loop.ts';
+import { containCover, atlasSubRectY, imageSizeFromHeader } from '../src/shelf/cover-atlas.ts';
 
 for (const genreCount of [1, 2, 7]) for (const albumCount of [1, 3, 40]) {
   const genres = Array.from({ length: genreCount }, (_, i) => ({ id: `g${i}`, name: `流派 ${i}` }));

@@ -2,9 +2,9 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
-import { decryptionFrame, DecryptionController } from "../src/decryption.ts";
-import { CardAppearance } from "../src/appearance.ts";
-import { frostedTransmissionLod, FROSTED_ROUGHNESS, CLEAR_ROUGHNESS } from "../src/glass-reveal.ts";
+import { decryptionFrame, DecryptionController } from "../src/core/decryption.ts";
+import { CardAppearance } from "../src/core/appearance.ts";
+import { frostedTransmissionLod, FROSTED_ROUGHNESS, CLEAR_ROUGHNESS } from "../src/viewer/glass-reveal.ts";
 
 // Frost occupies the same fraction of a cover across viewport sizes. Clearing
 // must never briefly increase its blur, and both original endpoints survive.

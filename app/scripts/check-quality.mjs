@@ -4,7 +4,7 @@ import {
   qualityPresets,
   matchingPreset,
   renderDimensions,
-} from "../src/render-quality.ts";
+} from "../src/core/render-quality.ts";
 
 assert.deepEqual(normalizeQuality(null), qualityPresets.original);
 const legacy = normalizeQuality(undefined, false);

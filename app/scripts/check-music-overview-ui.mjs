@@ -19,9 +19,9 @@ async function compiled(url) {
   modules.set(url.href, result);
   return result;
 }
-const { MusicOverviewUI } = await import(await compiled(new URL('../src/music-overview-ui.ts', import.meta.url)));
-const { setMusicMotionSpeed } = await import(await compiled(new URL('../src/music-motion-settings.ts', import.meta.url)));
-const { visibleOverviewLabels } = await import(await compiled(new URL('../src/music-overview.ts', import.meta.url)));
+const { MusicOverviewUI } = await import(await compiled(new URL('../src/shelf/music-overview-ui.ts', import.meta.url)));
+const { setMusicMotionSpeed } = await import(await compiled(new URL('../src/shelf/music-motion-settings.ts', import.meta.url)));
+const { visibleOverviewLabels } = await import(await compiled(new URL('../src/shelf/music-overview.ts', import.meta.url)));
 const animations = [];
 class Animation {
   currentTime = 0; playbackRate = 1; playState = 'running';

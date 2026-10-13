@@ -6,7 +6,7 @@ import { createHash } from "node:crypto";
 import ts from "typescript";
 import * as THREE from "three";
 
-const source = await readFile(new URL("../src/scene.ts", import.meta.url), "utf8");
+const source = await readFile(new URL("../src/shelf/scene.ts", import.meta.url), "utf8");
 const tree = ts.createSourceFile("scene.ts", source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const sceneClass = tree.statements.find(node => ts.isClassDeclaration(node) && node.name?.text === "ArchiveScene");
 assert.ok(sceneClass, "Production ArchiveScene must exist");
@@ -203,7 +203,7 @@ resources.instance.dispose();
 await resources.instance.prepareMusicRenderer();
 assert.deepEqual(resources.calls, afterDispose, "Repeated cleanup and late preparation cannot resurrect the renderer");
 
-const qualitySource = await readFile(new URL("../src/quality-renderer.ts", import.meta.url), "utf8");
+const qualitySource = await readFile(new URL("../src/core/quality-renderer.ts", import.meta.url), "utf8");
 const qualityTree = ts.createSourceFile("quality-renderer.ts", qualitySource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
 const qualityFunction = qualityTree.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === "applyTextureQuality");
 assert.ok(qualityFunction?.body);
